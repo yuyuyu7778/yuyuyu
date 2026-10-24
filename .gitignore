@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# 大体积无关文件（不纳入本仓库）
+2026年MathorCup大数据挑战赛-赛道B初赛/
+mathorcup2026A/
+A题_Q1/
+A题_外链核查/
+
+# 中间缓存
+out/_q3_cache.pkl
+out/*.pkl
+
+# 系统
+.DS_Store
+Thumbs.db
