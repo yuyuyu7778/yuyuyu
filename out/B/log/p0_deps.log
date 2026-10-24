@@ -1,0 +1,100 @@
+========================================================================
+P0-1 依赖安装与验证日志
+========================================================================
+运行时间戳(ISO) : 2026-10-24T14:11:45.929847+08:00
+Python          : 3.12.9  (AMD64, Windows 11)
+解释器路径      : D:\python312\python.exe
+pip 源          : https://pypi.tuna.tsinghua.edu.cn/simple  (清华镜像; 实测直连 pypi.org 极慢)
+安装命令        : D:/python312/python.exe -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple \
+                  tifffile pyshp imageio imageio-ffmpeg rasterio netCDF4
+说明            : tigramite 按用户指示暂缓至 Q1；imageio-ffmpeg 为 Q4 mp4 动画补装（本机无 ffmpeg）
+追加安装(1)     : imagecodecs-2026.10.10  (用户批准补装; 清华源)
+                  命令: D:/python312/python.exe -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple imagecodecs
+                  原因: DEM.tif 为 LZW 压缩，tifffile 解码像素需 imagecodecs
+
+------------------------------------------------------------------------
+[1] 安装结果 (pip)
+------------------------------------------------------------------------
+Collecting tifffile
+Collecting pyshp
+Collecting imageio
+Collecting imageio-ffmpeg
+Collecting rasterio
+Collecting netCDF4
+Requirement already satisfied: numpy>=2.1 in d:\python312\lib\site-packages (from tifffile) (2.5.3)
+Requirement already satisfied: pillow>=8.3.2 in d:\python312\lib\site-packages (from imageio) (12.3.0)
+Collecting affine (from rasterio)
+Collecting attrs (from rasterio)
+Collecting certifi (from rasterio)
+Collecting click!=8.2.*,>=4.0 (from rasterio)
+Requirement already satisfied: pyparsing>=3.0 in d:\python312\lib\site-packages (from rasterio) (3.3.2)
+Collecting cftime (from netCDF4)
+Requirement already satisfied: packaging in d:\python312\lib\site-packages (from netCDF4) (26.3)
+Installing collected packages: tifffile, pyshp, imageio-ffmpeg, imageio, click, cftime, certifi, attrs, netCDF4, affine, rasterio
+Successfully installed affine-3.0.1 attrs-26.1.0 certifi-2026.10.23 cftime-1.6.6.1 click-8.5.0 imageio-2.38.1 imageio-ffmpeg-0.6.0 netCDF4-1.7.5.1.post1 pyshp-3.1.6 rasterio-1.5.2 tifffile-2026.10.15
+
+------------------------------------------------------------------------
+[2] 逐个 import 验证
+------------------------------------------------------------------------
+模块                版本                        结果
+------------------------------------------------------------------------
+tifffile          2026.10.15                OK
+shapefile         3.1.6                     OK
+imageio           2.38.1                    OK
+imageio_ffmpeg    0.6.0                     OK
+rasterio          1.5.2                     OK
+netCDF4           1.7.5.1.post1             OK
+
+------------------------------------------------------------------------
+[3] rasterio 自检: 只读打开 data/B/raw/DEM.tif
+------------------------------------------------------------------------
+rasterio.__version__      : 1.5.2
+rasterio.__gdal_version__ : 3.12.2
+driver      : GTiff
+shape       : (1148, 1816)   (rows, cols)
+count/dtype : 1 band(s), float32
+res         : (0.0002777467191455384, 0.00027774196409497727)
+crs         : EPSG:4326
+bounds      : BoundingBox(left=85.18975577464204, bottom=28.24553450979829, right=85.69414381661034, top=28.564382284579324)
+nodata      : -32767.0
+array       : min=1620.910 max=7254.477 mean=4538.389
+结果        : OK
+
+------------------------------------------------------------------------
+[4] tifffile 自检 (作为 rasterio 的独立交叉验证)
+------------------------------------------------------------------------
+tifffile.__version__    : 2026.10.15
+imagecodecs.__version__ : 2026.10.10        (补装后)
+page shape  : (1148, 1816)
+dtype       : float32
+photometric : 1 (BlackIsZero)
+compression : LZW (5)
+decoded arr : shape=(1148, 1816)  dtype=float32
+              min=1620.910  max=7254.477  mean=4538.389
+              nodata(-32767) 计数 = 0
+              md5(array bytes) = df6ab464a77431d6dbfabfbd3c291dca
+交叉验证    : rasterio 读出的数组 md5 = df6ab464a77431d6dbfabfbd3c291dca
+              np.array_equal(tifffile, rasterio) = True   max|diff| = 0.0
+结果        : OK
+备注        : 两套解码器逐像素完全一致 → DEM 读取路线双保险，rasterio 与 tifffile 互为备份。
+              若走 CLAUDE_B.md 回退树「tifffile + DEM.tfw」分支，imagecodecs 已就位，可直接解码。
+
+------------------------------------------------------------------------
+[5] raw 完整性 (安装前后一致 = 未触碰原始文件)
+------------------------------------------------------------------------
+BEFORE : files=70  dir_mtime=2026-10-24 13:09:45.646942500 +0800  fingerprint(md5 of path+size+mtime)=43ba1795da9817eeddaa498b803f9334
+AFTER  : files=70    fingerprint=43ba1795da9817eeddaa498b803f9334
+对比        : 一致。安装前后文件数、路径、大小、mtime 均未改变 → 原始数据未被触碰。
+
+------------------------------------------------------------------------
+[6] 结论
+------------------------------------------------------------------------
+ALL_OK
+判据        : ① 5+1 个目标模块 (tifffile/pyshp/imageio/imageio_ffmpeg/rasterio/netCDF4) import 全部成功；
+              ② rasterio(mode='r') 只读打开 DEM.tif 成功，读出 shape=(1148,1816) float32 / res / EPSG:4326；
+              ③ tifffile 在 imagecodecs 支持下解码同一 DEM 成功，shape/dtype 一致，
+                 且与 rasterio 逐像素完全相同 (md5 相同, max|diff|=0.0)；
+              ④ data/B/raw 安装前后 70 个文件 fingerprint 未变。
+              → 四项全过，判 ALL_OK；rasterio 主路线与 tifffile 回退路线均验证可用。
+待办提醒    : ① Q1 前补装 tigramite（装不上走 block-permutation 条件互信息回退树）
+              ② 已补装 imagecodecs-2026.10.10，回退路线前提条件已满足

@@ -9,6 +9,9 @@ mathorcup2026A/
 A题_Q1/
 A题_外链核查/
 
+# B 题原始附件：只读且体量大（42 MB / 70 文件），不纳入版本库
+data/B/raw/
+
 # 中间缓存
 out/_q3_cache.pkl
 out/*.pkl
