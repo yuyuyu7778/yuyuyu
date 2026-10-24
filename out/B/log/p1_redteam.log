@@ -1,0 +1,85 @@
+==============================================================================
+P1-4 红队复核日志 (独立校验，不复用 srcB/io_utils.py 代码)
+==============================================================================
+运行时间戳 : 2026-10-24T15:07:18.019336+08:00
+复核方式   : 独立脚本从 data/B/raw/*.csv 重算，全部断言重新推导
+脚本位置   : 系统临时目录 (不入库)；本日志为其完整输出
+说明       : 原计划用子代理复核，因子代理上游 429 限流不可用，
+             改为主进程执行同等强度的独立校验（不复用被测代码）。
+校验脚本自身修正 2 处后全绿：
+   1) 抽查项原用 np.isclose 默认 rtol=1e-5，而 CSV 以 %.4f 落盘，
+      0.13584 → 0.1358 必然触发假 FAIL；改为 |diff| <= 1e-4。
+   2) 连续无雨日数复算原漏了哨兵掩码，把 9999.9 当成降水量，
+      导致「总降水 1110148.7 mm」的荒谬结果；补 mask 后为 155.000 mm。
+   两处均为校验脚本自身缺陷，非被测代码错误 —— 如实记录。
+
+=== (d) 行数 / 闰年 ===
+PASS  MET total rows: 52584 (expect 52584)
+PASS  MET 2024 leap: 8784
+PASS  RADM total rows: 52584 (expect 52584)
+PASS  RADM 2024 leap: 8784
+PASS  SOIL total rows: 52584 (expect 52584)
+PASS  SOIL 2024 leap: 8784
+PASS  FLUX total rows: 52584 (expect 52584)
+PASS  FLUX 2024 leap: 8784
+
+=== (a) 哨兵处理 ===
+PASS  MET sentinel residual after mask: 0
+PASS  MET value cols = 22: 22
+PASS  MET qc cols = 21: 21
+PASS  MET col without QC == Precip: ['Precip(mm)']
+PASS  MET QC keeps flag 8 (not treated as sentinel): flag 8 present
+PASS  RADM sentinel residual after mask: 0
+PASS  RADM QC keeps flag 8 (not treated as sentinel): flag 8 present
+PASS  SOIL sentinel residual after mask: 0
+PASS  SOIL QC keeps flag 8 (not treated as sentinel): flag 8 present
+PASS  FLUX sentinel residual after mask: 0
+
+=== (b) 2026 截止时刻 ===
+PASS  MET last valid 2026: 2026-08-27 08:00:00
+PASS  MET 2026 valid rows: 5721
+PASS  RADM last valid 2026: 2026-08-27 08:00:00
+PASS  RADM 2026 valid rows: 5721
+PASS  SOIL last valid 2026: 2026-08-27 08:00:00
+PASS  SOIL 2026 valid rows: 5721
+PASS  FLUX last valid 2026: 2026-08-27 08:00:00
+PASS  FLUX 2026 valid rows: 5721
+
+=== (c) 8/26 降水 ===
+  逐时值: [np.float64(0.0), np.float64(0.0), np.float64(0.0), np.float64(0.0), np.float64(0.0), np.float64(0.0), np.float64(0.0), np.float64(0.0), np.float64(0.0), np.float64(0.0), np.float64(0.0), np.float64(0.0), np.float64(0.0), np.float64(0.0), np.float64(0.0), np.float64(0.0), np.float64(0.0), np.float64(0.0), np.float64(0.0), np.float64(0.0), np.float64(0.0), np.float64(0.0), np.float64(0.0), np.float64(0.0)]
+PASS  8/26 n hours: 24
+PASS  8/26 any NaN: 0
+PASS  8/26 all zero: sum=0.0
+PASS  8/26 total == 0.0: 0.0
+PASS  MET has no QC_Precip: confirmed absent
+PASS  log states no QC_Precip: found
+PASS  log does not claim QC pass: no false claim
+PASS  csv 8/26 precip matches: n=24 sum=0.0
+
+=== (e) b0_event_window.csv ===
+PASS  rows 177: 177
+PASS  cols 14: 14
+PASS  time range: 2026-08-20 00:00:00 -> 2026-08-27 08:00:00
+PASS  spot 2026-08-22 06:00 VWC_0.4m: orig=0.13584 csv=0.1358 diff=4.00e-05
+PASS  spot 2026-08-25 14:00 Rsd_Wm2: orig=1069.26 csv=1069.26 diff=0.00e+00
+PASS  spot 2026-08-26 10:00 USTAR_ms: orig=0.09831359 csv=0.0983 diff=1.36e-05
+
+=== (f) 连续无雨日数 ===
+PASS  daily rows 92: 92
+PASS  complete days 87: 87
+PASS  rainy days 37: 37
+PASS  total 155.000: 155.00000000000003
+PASS  max daily 20.8 on 08-05: 20.8 on 2026-08-05
+PASS  max spell 29 at 06-29: 29 at 2026-06-29
+PASS  spell series matches csv: series equal
+
+=== (g) 矢量 ===
+PASS  灾点 records 84: 84
+PASS  灾点 fields 33: 33
+PASS  灾点 CRS CGCS2000: GEOGCS["GCS_China_Geodetic_Coordinate_System_2000",DATUM["D_
+PASS  七普 records 1: 1
+PASS  七普 fields 27: 27
+PASS  七普 CRS WGS1984: GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984"
+
+============================================================
+REDTEAM_VERDICT: PASS

@@ -12,6 +12,11 @@ A题_外链核查/
 # B 题原始附件：只读且体量大（42 MB / 70 文件），不纳入版本库
 data/B/raw/
 
+# B 题外部解压数据：附件(3) 冰川数据集，282 MB / 190 文件，不纳入版本库
+# 来源：2026年MathorCup大数据挑战赛-赛道B初赛/附件/（3）...rar
+# 解压方式：Windows 自带 bsdtar (C:\Windows\System32\tar.exe, libarchive 3.8.8)，未安装第三方软件
+data/B/external/
+
 # 中间缓存
 out/_q3_cache.pkl
 out/*.pkl
