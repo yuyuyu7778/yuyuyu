@@ -24,12 +24,14 @@
 修正办法：参考分布只保留与事件窗同季节的滑窗（窗口起点在 8/04–9/03，
 使窗口中心落在事件窗中心 ±15 天内）。
 
-### [3] 留一年交叉（LOYO）六年对比 — 最干净的同季对照
+### [3] 留一年交叉（LOYO）：N 年之最 — 最干净的同季对照
 把 2021–2025 每年的同一日历窗（8/19 00:00 起 179 h）依次留出，
 用其余 4 年建气候态，算该年被留出年份窗口的 z̄。
-这样得到 5 个「同季节、样本外」的参考值，与事件窗（用 5 年气候态）对比。
+这样得到最多 5 个「同季节、样本外」的参考值，与事件窗（用 5 年气候态）对比。
 - 比历年都极端 → 提示异常
-- 随机情况下每个特征的命中率是 1/6
+- ★ 各特征有效历史年数 n 因缺测而异（实测 24 个 n=5、10 个 n=4、1 个 n=2、3 个 n=0），
+  随机命中「N 年之最」的概率 = 1/(n+1)，期望命中数按各自 1/(n+1) 求和，
+  不能一刀切除以 6（红队复验·高1：此处曾残留把命中率写死为固定值的旧表述）。
 
 注意 LOYO 的不对称：历史年用 4 年气候态，事件窗用 5 年气候态。
 这会略微放大历史年的波动，属于保守方向（不利于事件显著），如实记录。
@@ -187,15 +189,18 @@ def main() -> int:
         d.mkdir(parents=True, exist_ok=True)
 
     add("=" * 78)
-    add("Q1 Tier 1 三项独立复核：多重检验 / 季节性混杂 / LOYO 六年对比")
+    add("Q1 Tier 1 三项独立复核：多重检验 / 季节性混杂 / LOYO 留一年对比（N 年之最）")
     add("=" * 78)
     add(f"运行时间戳 : {datetime.now().astimezone().isoformat()}")
     add(f"Python     : {sys.version.split()[0]}   numpy {np.__version__} / pandas {pd.__version__}")
     add(f"SEED       : {SEED}")
     add("")
-    add("复核动机：主脚本报告『显著 2/38』，而对 38 个量同时做 α≈0.05 检验，")
-    add("          纯噪声下的期望假发现数 = 38 × 0.05 ≈ 1.9 —— 与实测 2 个不可区分。")
-    add("          必须做 BH-FDR 后才能下『前兆信号成立』的结论。")
+    add("复核动机：早期主脚本（全年参考版）曾报告『显著 2/38』——对 38 个量同时做")
+    add("          α≈0.05 检验，纯噪声下期望假发现数 = 38 × 0.05 ≈ 1.9，与实测 2 个不可区分。")
+    add("          现行同季参考口径下：可评估特征 33 个，名义 ≥95 分位 3 个，")
+    add("          纯噪声期望 = 33 × 0.05 = 1.65。")
+    add("          两种口径下都必须先过 BH-FDR，才能下『前兆信号成立』的结论。")
+    add("          （红队复验·E3：此处原为旧口径硬编码，已改述为「早期版本」并补现行口径。）")
     add("")
 
     feats = pd.read_csv(CLEAN_DIR / "features_hourly.csv", encoding="utf-8-sig",
@@ -223,7 +228,9 @@ def main() -> int:
     quiet: list[str] = []
     med, mad = B3.build_climatology(feats, cols, quiet)
     ev_start, ev_end = B3.EVENT_START, B3.EVENT_END
-    excl = (ev_start - pd.Timedelta(hours=B3.WIN_HOURS), ev_end)
+    # 【红队复核·中1】与主脚本同步修复：直接传事件窗两端。
+    # 早期版本多减了 WIN_HOURS，额外排除了 8/05–8/11 的 7 个同季起点。
+    excl = (ev_start, ev_end)
 
     rows: list[dict[str, object]] = []
     ref_full_all: dict[str, np.ndarray] = {}
@@ -276,63 +283,78 @@ def main() -> int:
     add("-" * 78)
     add(f"[1] 多重检验校正（BH-FDR q={FDR_Q}）")
     add("-" * 78)
-    eval_mask = np.isfinite(df["p_full"].to_numpy(dtype=float))
-    n_test = int(eval_mask.sum())
-    add(f"   可评估特征数 m = {n_test}（另有 {len(df) - n_test} 个因 MAD=0 无法评估）")
+    eval_full = np.isfinite(df["p_full"].to_numpy(dtype=float))
+    eval_sea = np.isfinite(df["p_season"].to_numpy(dtype=float))
+    n_test_full = int(eval_full.sum())
+    n_test_sea = int(eval_sea.sum())
+    add(f"   可评估特征数：全年口径 m = {n_test_full}，同季口径 m = {n_test_sea}"
+        f"（另有 {len(df) - n_test_full} 个因 MAD=0 无法评估）")
     add("")
 
-    # 口径 A：全部可评估特征
-    pA = df["p_full"].to_numpy(dtype=float)
-    rejA = bh_reject(pA[eval_mask], FDR_Q)
-    rejA_full = np.zeros(len(df), dtype=bool)
-    rejA_full[np.where(eval_mask)[0]] = rejA
-    df["bh_pass_38"] = rejA_full
-    df["bonf_pass_38"] = False
-    bonf = bonferroni_reject(pA[eval_mask], 0.05)
+    # 【红队复核·中2】两个口径分别校正，列名写清楚，不得让「BH 通过」
+    # 被误读成只有某一个参考分布下的结果。
+    df["bh_pass_full"] = False
+    df["bonf_pass_full"] = False
     tmp = np.zeros(len(df), dtype=bool)
-    tmp[np.where(eval_mask)[0]] = bonf
-    df["bonf_pass_38"] = tmp
+    tmp[np.where(eval_full)[0]] = bh_reject(df["p_full"].to_numpy(dtype=float)[eval_full], FDR_Q)
+    df["bh_pass_full"] = tmp
+    tmp = np.zeros(len(df), dtype=bool)
+    tmp[np.where(eval_full)[0]] = bonferroni_reject(
+        df["p_full"].to_numpy(dtype=float)[eval_full], 0.05)
+    df["bonf_pass_full"] = tmp
 
-    add(f"   口径 A：m = {n_test} 个特征")
-    add(f"      BH-FDR 通过数     = {int(df['bh_pass_38'].sum())}")
-    add(f"      Bonferroni 通过数 = {int(df['bonf_pass_38'].sum())}")
-    add(f"      期望 accidental discovery（纯噪声）= m × 0.05 = {n_test * 0.05:.2f}")
+    df["bh_pass_season"] = False
+    df["bonf_pass_season"] = False
+    tmp = np.zeros(len(df), dtype=bool)
+    tmp[np.where(eval_sea)[0]] = bh_reject(df["p_season"].to_numpy(dtype=float)[eval_sea], FDR_Q)
+    df["bh_pass_season"] = tmp
+    tmp = np.zeros(len(df), dtype=bool)
+    tmp[np.where(eval_sea)[0]] = bonferroni_reject(
+        df["p_season"].to_numpy(dtype=float)[eval_sea], 0.05)
+    df["bonf_pass_season"] = tmp
+
+    add(f"   口径 A（特征级，全年参考）：BH-FDR 通过 {int(df['bh_pass_full'].sum())}，"
+        f"Bonferroni 通过 {int(df['bonf_pass_full'].sum())}；纯噪声期望 {n_test_full * 0.05:.2f}")
+    add(f"   口径 A（特征级，同季参考）：BH-FDR 通过 {int(df['bh_pass_season'].sum())}，"
+        f"Bonferroni 通过 {int(df['bonf_pass_season'].sum())}；纯噪声期望 {n_test_sea * 0.05:.2f}")
     add("")
 
-    # 口径 B：只检验通道代表元
+    # 口径 B：只检验「有可评估代表」的通道，按同季 p 为代表。
+    # 【红队复核·中3】m = 有可评估代表的通道数（16 通道中有 3 个无代表），
+    # 不是通道总数。
     df["bh_pass_chan"] = False
     if cl is not None:
         df = df.merge(cl[["feature", "cluster"]], on="feature", how="left")
-        # 每组取 p_full 最小者作为代表（等价于原脚本取分位最高者）。
+        # 每组取 p_season 最小者作为代表。
         # 注意：pandas 3 下 groupby(as_index=False).first() 返回 RangeIndex，
-        # 直接用 .index 会取到「表的前 N 行」而不是各组代表行。
+        # 直接用 .index 会取到「表的前 N 行」而不是各组代表行；
         # 用 groupby(...).head(1) 可保留原始索引标签。
-        reps = (df[df["p_full"].notna()]
-                .sort_values("p_full")
+        reps = (df[df["p_season"].notna()]
+                .sort_values("p_season")
                 .groupby("cluster", as_index=True).head(1))
-        rep_names = set(reps["feature"])
-        sub = df[df["feature"].isin(rep_names)].copy()
-        pw = sub["p_full"].to_numpy(dtype=float)
+        m_eval = int(reps["cluster"].nunique())
+        m_total = int(df["cluster"].nunique())
+        pw = reps["p_season"].to_numpy(dtype=float)
         rejB = bh_reject(pw, FDR_Q)
-        m = int(df["cluster"].nunique())
-        add(f"   口径 B：m = {m} 个物理通道（每组只检验 1 个代表元）")
+        add(f"   口径 B：同季 p，m = {m_eval} 个有可评估代表的通道"
+            f"（共 {m_total} 个通道，{m_total - m_eval} 个因 MAD=0 无代表，不计入）")
         add(f"      BH-FDR 通过数     = {int(rejB.sum())}")
         add(f"      Bonferroni 通过数 = {int(bonferroni_reject(pw, 0.05).sum())}")
-        add(f"      期望 accidental discovery（纯噪声）= {m * 0.05:.2f}")
+        add(f"      期望 accidental discovery（纯噪声）= {m_eval * 0.05:.2f}")
         add("")
         add("      BH 阈值对照（形如  p_(k) ≤ k/m·q ），仅列代表元：")
-        pw_sorted = np.sort(pw)
-        for k, pk in enumerate(pw_sorted[:6], start=1):
-            thr = FDR_Q * k / m
+        for k, pk in enumerate(np.sort(pw)[:6], start=1):
+            thr = FDR_Q * k / m_eval
             add(f"        第 {k} 小 p = {pk:.4f}   阈值 = {thr:.5f}   "
                 f"{'✓ 通过' if pk <= thr else '× 未通过'}")
-        for f_, rb in zip(sub["feature"], rejB):
+        for f_, rb in zip(reps["feature"], rejB):
             df.loc[df["feature"] == f_, "bh_pass_chan"] = bool(rb)
     else:
         add("   口径 B：未找到通道聚类文件，跳过。")
 
     add("")
-    add("   ★ 两个口径都按 BH-FDR 判定，结论不会因『按特征还是按通道』而摇摆。")
+    add("   ★ 三个口径（全年特征 / 同季特征 / 同季通道）都按 BH-FDR 判定，")
+    add("     结论不会因口径选择而摇摆。")
 
     # ---------- [2] 季节性混杂 ----------
     add("")
@@ -357,11 +379,13 @@ def main() -> int:
     # ---------- [3] LOYO 六年对比 ----------
     add("")
     add("-" * 78)
-    add("[3] LOYO 六年对比（最干净的同季节、样本外对照）")
+    add("[3] LOYO 留一年对比：N 年之最（最干净的同季节、样本外对照）")
     add("-" * 78)
     add("   逐年留出 2021–2025 的同一日历窗（8/19 00:00 起 179 h），")
-    add("   用其余 4 年建气候态，算被留出年份的 z̄；得到 5 个样本外参考值。")
-    add("   随机情况下每特征命中『2026 为六年之最』的概率 = 1/6 ≈ 16.7%。")
+    add("   用其余 4 年建气候态，算被留出年份的 z̄；每年得到 1 个样本外参考值。")
+    add("   ★ 各特征的有效历史年数 n 因缺测而异，随机命中『为 N 年之最』的概率 = 1/(n+1)，")
+    add("     期望命中数须按各自 1/(n+1) 求和 —— 不能一刀切除以 6（红队复验·高1）。")
+    add("     n 的实测分布见本节末尾。")
     add("")
 
     loyo: dict[str, dict[str, float]] = {}
@@ -398,35 +422,62 @@ def main() -> int:
     hit = pd.DataFrame(hit_rows)
     df = df.merge(hit, on="feature", how="left")
 
-    add(f"   {'feature':<24}{'事件 z̄':>9}{'历年中位':>10}{'历年最大':>10}"
-        f"{'为六年之最':>12}{'p_loyo':>9}")
+    add(f"   {'feature':<24}{'事件 z̄':>9}{'有效年数':>9}{'历年中位':>10}{'历年最大':>10}"
+        f"{'为N年之最':>10}{'p_loyo':>9}")
     show = df.dropna(subset=["p_loyo"]).nsmallest(15, "p_loyo")
     for _, r in show.iterrows():
-        add(f"   {r['feature']:<24}{r['event_zbar']:>9.3f}{r['loyo_median']:>10.3f}"
-            f"{r['loyo_max']:>10.3f}{('是' if r['is_extreme'] else '否'):>12}"
-            f"{r['p_loyo']:>9.3f}")
+        add(f"   {r['feature']:<24}{r['event_zbar']:>9.3f}{int(r['loyo_n']):>9}"
+            f"{r['loyo_median']:>10.3f}{r['loyo_max']:>10.3f}"
+            f"{('是' if r['is_extreme'] else '否'):>10}{r['p_loyo']:>9.3f}")
     add("")
 
     n_ext_total = int(df["is_extreme"].fillna(False).sum())
     n_eval = int(df["p_loyo"].notna().sum())
-    # 通道数（用于计算期望命中数）
-    n_ch = int(df["cluster"].nunique()) if "cluster" in df.columns else n_eval
-    add(f"   可评估 {n_eval} 个特征，其中 {n_ext_total} 个特征是「六年之最」")
-    add(f"   随机期望（按特征）= {n_eval / 6:.1f} 个；按 {n_ch} 个通道 = {n_ch / 6:.1f} 个")
-    add(f"   -> 观测 {n_ext_total} vs 期望约 {n_ch / 6:.1f}，"
-        f"{'未见明显超出' if n_ext_total <= n_ch / 6 + 1 else '高于纯随机期望'}")
+    # 【红队复核·中4】随机期望按每个特征自己的历史年数 1/(loyo_n+1) 求和，
+    # 不能一刀切除以 6；观测数要同时报「特征数」和「覆盖通道数」。
+    exp_feat = float((1.0 / (df.loc[df["p_loyo"].notna(), "loyo_n"] + 1)).sum())
+    # 【红队复验·高1】如实列出 n 的实测分布，不再假设「六年」
+    _vc = df.loc[df["p_loyo"].notna(), "loyo_n"].value_counts().sort_index(ascending=False)
+    add("   有效历史年数 n 的实测分布（缺测所致，并非都是 6 年）：")
+    add('      ' + '；'.join(f'n={int(k)} 者 {int(v)} 个（随机概率 1/{int(k) + 1}）'
+                            for k, v in _vc.items()))
+    ext_rows = df[df["is_extreme"].fillna(False)]
+    # 【红队复验·E4】分子分母统一为「代表元」口径：只计代表元自身命中，
+    # 这样 E[观测] = Σ 1/(n_i+1) 才与分母自洽；簇覆盖数另报，仅作参考。
+    if "cluster" in df.columns:
+        n_ext_chan_cover = int(ext_rows["cluster"].nunique()) if len(ext_rows) else 0
+        reps_loyo = (df[df["p_loyo"].notna()]
+                     .sort_values("p_season")
+                     .groupby("cluster", as_index=True).head(1))
+        exp_chan = float((1.0 / (reps_loyo["loyo_n"] + 1)).sum())
+        n_ext_chan = int(reps_loyo["is_extreme"].fillna(False).sum())
+        reps_eval = reps_loyo[reps_loyo["p_season"].notna()]
+        exp_chan13 = float((1.0 / (reps_eval["loyo_n"] + 1)).sum())
+        n_ext_chan13 = int(reps_eval["is_extreme"].fillna(False).sum())
+    else:
+        n_ext_chan_cover = n_ext_chan = n_ext_chan13 = n_ext_total
+        exp_chan = exp_chan13 = exp_feat
+    add(f"   可评估 {n_eval} 个特征，观测「为N年之最」= {n_ext_total} 个特征"
+        f"（簇覆盖 {n_ext_chan_cover} 个通道；代表元自身命中 {n_ext_chan} 个）")
+    add(f"   随机期望：按特征 = {exp_feat:.2f} 个；"
+        f"按通道代表（14 个，含不可评估的 Albedo）= {exp_chan:.2f} 个；"
+        f"按可评估代表（13 个）= {exp_chan13:.2f} 个")
+    add(f"   -> 观测/期望：按特征 = {n_ext_total / max(exp_feat, 1e-9):.2f}；"
+        f"按通道代表 14 = {n_ext_chan / max(exp_chan, 1e-9):.2f}；"
+        f"按可评估代表 13 = {n_ext_chan13 / max(exp_chan13, 1e-9):.2f}")
+    add("   ★ 分子分母已统一为「代表元」口径（E4）；簇覆盖数按簇计，与分母不同源。")
     add("")
-    add("   ★ p_loyo 的下限是 1/6 ≈ 0.167（只有 5 个历史参考值），")
+    add("   ★ p_loyo 的下限是 1/(loyo_n+1)，历史年数少（缺测）会抬高下限，")
     add("     所以这一步不能单独给出「显著」，它的作用是**证伪**：")
-    add("     若某特征连六年最大都做不到，就不可能被称为前兆。")
+    add("     若某特征连 N 年最大都做不到，就不可能被称为前兆。")
 
-    # ---------- [4] 季节匹配口径下的 Top-5（通道去冗余） ----------
+    # ---------- [4] 两个参考口径的 Top-5 对照 ----------
     add("")
     add("-" * 78)
-    add("[4] 季节匹配参考分布下的 Top-5（仍做通道去冗余）")
+    add("[4] 两个参考口径的 Top-5 对照（通道去冗余）")
     add("-" * 78)
-    add("   既然 [2] 证明全年参考分布混入季节效应，排序就应改用同季节参考。")
-    add("   这里给出替代版 Top-5，供与主脚本的版本对照取舍。")
+    add("   主脚本已把同季参考设为主口径。这里给出两个口径并排对照，")
+    add("   供论文的稳健性章节直接引用。")
     add("")
 
     if "cluster" in df.columns:
@@ -438,22 +489,31 @@ def main() -> int:
         reps2.to_csv(TAB_DIR / "b3b_top5_seasonmatched.csv", index=False, encoding="utf-8-sig")
 
         add(f"   {'rank':>4} {'feature':<22}{'通道':>5}{'同季分位':>10}{'z̄':>9}"
-            f"{'方向':<8}{'六年之最':>9}{'p全季':>9}")
+            f"{'方向':<8}{'N年之最':>9}{'p同季':>9}")
         for _, r in reps2.head(8).iterrows():
+            ny = int(r["loyo_n"]) + 1 if np.isfinite(r.get("loyo_n", np.nan)) else 0
+            ext_lab = (f"{ny}年之最" if (r["is_extreme"] and ny) else "否")
             add(f"   {int(r['season_rank']):>4} {r['feature']:<22}{int(r['cluster']):>5}"
                 f"{r['pctl_season']:>10.1f}{r['event_zbar']:>9.3f}"
                 f"{B3._direction_label(r['event_zbar']):<8}"
-                f"{('是' if r['is_extreme'] else '否'):>9}{r['p_full']:>9.4f}")
+                f"{ext_lab:>9}{r['p_season']:>9.4f}")
         add("")
+
+        # 【红队复核·低1】「原 Top-5」必须在本脚本内部从全年口径重算，
+        # 不能再读 b3_top5_final.csv —— 那个文件已切到同季口径，
+        # 读它会让新旧 Top-5 看起来完全一样。
+        ev_full = df.dropna(subset=["pctl_full"])
+        reps_full = (ev_full.sort_values("pctl_full", ascending=False)
+                            .groupby("cluster", as_index=False).head(1)
+                            .sort_values("pctl_full", ascending=False))
+        old_names = list(reps_full.head(5)["feature"])
         top5_new = list(reps2.head(5)["feature"])
-        old_top5 = pd.read_csv(TAB_DIR / "b3_top5_final.csv", encoding="utf-8-sig")
-        old_names = list(old_top5["feature"])
-        add(f"   原 Top-5（全年参考）: {', '.join(old_names)}")
-        add(f"   新 Top-5（同季参考）: {', '.join(top5_new)}")
+        add(f"   全年参考版 Top-5: {', '.join(old_names)}")
+        add(f"   同季参考版 Top-5: {', '.join(top5_new)}")
         gone = [f for f in old_names if f not in top5_new]
         came = [f for f in top5_new if f not in old_names]
-        add(f"   剔除: {', '.join(gone) if gone else '（无）'}")
-        add(f"   新增: {', '.join(came) if came else '（无）'}")
+        add(f"   同季版剔除: {', '.join(gone) if gone else '（无）'}")
+        add(f"   同季版新增: {', '.join(came) if came else '（无）'}")
         add("")
         add("   ★ 被剔除的项——它们的『高分位』在同季节参考下大幅回落，")
         add("     说明原本的高名次主要是季节效应，而非本次事件的异常。")
@@ -468,23 +528,30 @@ def main() -> int:
     add("-" * 78)
     add("[结论]")
     add("-" * 78)
-    n_bh = int(df["bh_pass_38"].sum())
-    n_bonf = int(df["bonf_pass_38"].sum())
-    add(f"   口径 A（{n_test} 特征）：BH-FDR 通过 {n_bh} 个，Bonferroni 通过 {n_bonf} 个")
+    n_bh_f = int(df["bh_pass_full"].sum())
+    n_bh_s = int(df["bh_pass_season"].sum())
+    n_bonf_f = int(df["bonf_pass_full"].sum())
+    add(f"   特征级（全年参考，{n_test_full} 个）：BH-FDR 通过 {n_bh_f}，Bonferroni 通过 {n_bonf_f}")
+    add(f"   特征级（同季参考，{n_test_sea} 个）：BH-FDR 通过 {n_bh_s}，"
+        f"Bonferroni 通过 {int(df['bonf_pass_season'].sum())}")
     if cl is not None:
         n_bh2 = int(df["bh_pass_chan"].sum())
-        m = int(df["cluster"].nunique())
-        add(f"   口径 B（{m} 通道）  ：BH-FDR 通过 {n_bh2} 个")
+        m_eval = int(df.loc[df["p_season"].notna(), "cluster"].nunique())
+        add(f"   通道级（同季参考，{m_eval} 个可评估通道）：BH-FDR 通过 {n_bh2} 个")
     add("")
-    add(f"   未校正达到 ≥95 分位的原始个数 = {int((df['pctl_full'] >= 95).sum())}"
-        f"（对照：纯噪声期望 {n_test * 0.05:.2f}）")
+    add(f"   全年参考未校正达到 ≥95 分位的个数 = {int((df['pctl_full'] >= 95).sum())}"
+        f"（纯噪声期望 {n_test_full * 0.05:.2f}）")
+    add(f"   同季参考未校正达到 ≥95 分位的个数 = {int((df['pctl_season'] >= 95).sum())}"
+        f"（纯噪声期望 {n_test_sea * 0.05:.2f}）")
     add("")
-    if n_bh == 0:
-        add("   ★★ 校正后没有任何特征通过 BH-FDR。")
+    if n_bh_f == 0 and n_bh_s == 0 and (cl is None or n_bh2 == 0):
+        add("   ★★ 三个口径下 BH-FDR 全部通过数为 0。")
         add("      即：不能声称『前兆信号成立』。可以报告的是排序本身，")
         add("      并把最强的候选明确标注为『未通过多重检验校正的提名项』。")
     else:
-        add("   通过校正的特征：" + ", ".join(df.loc[df["bh_pass_38"], "feature"]))
+        add("   通过校正的特征：" +
+            ", ".join(df.loc[df["bh_pass_full"] | df["bh_pass_season"] | df["bh_pass_chan"],
+                             "feature"]))
 
     add("")
     add(f"   总耗时 {time.time() - t_all:.1f}s")

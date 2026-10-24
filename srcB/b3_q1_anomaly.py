@@ -18,14 +18,15 @@
 2. 稳健 z = (x − median(hour)) / (1.4826·MAD(hour))
 3. 事件窗（179 h）的 z̄
 4. 参考分布：**同季节**滑窗（窗口起点 8/04–9/03，窗中心 ±15 天内）
-   —— 不用全年滑窗。全年参考会把季节效应误读为异常（实测 Rn 89.3 → 同季 69.9）
+   —— 不用全年滑窗。全年参考会把季节效应误读为异常（实测 Rn 89.0 → 同季 66.9）
 5. 经验 p = (1 + #{z̄_ref ≥ z̄_event}) / (N_ref + 1)
 
 ## Tier 1 显著性三分判据（2026-10-24 三项复核后确立）
 
-1. **BH-FDR q=0.05**（双口径：33 特征 / 16 通道代表元）
+1. **BH-FDR q=0.05**（双口径：33 个可评估特征 / 13 个可评估通道代表；
+   通道共 14 个代表，其中 Albedo 无同季分位、不可评估）
 2. **LOYO 留一年交叉**：逐年留出 2021–2025 同日历窗建气候态，
-   事件窗是否「六年之最」—— 证伪性判据
+   事件窗是否「N 年之最」（N = 有效历史年数，因缺测而异，实测 4 或 5）—— 证伪性判据
 3. **季节匹配参考**（上述第 4 条）
 
 不再对时间序列做 surrogate（旧做法三种零模型全部失败：
@@ -114,7 +115,10 @@ SIG_PERCENTILE: float = 95.0
 #: 季节匹配参考分布的窗口起点范围（MMDD 数值），使窗中心落在事件窗中心 ±15 天内。
 #: 为什么必须限制：z 是相对**固定 8/19–8/26 气候态**算的，而参考若取全年滑窗，
 #: 冬季窗口的 z̄ 天然远离 0，事件窗（本身就在 8 月下旬）会被系统性顶到高位。
-#: 实测：不限制时 Rn_Wm2 分位 89.3，限制后掉到 69.9 —— 那 19.5 分全是季节效应。
+#: 实测（见 out/B/log/p2c_anomaly.log 的「典型例子」行，由本脚本动态输出）：
+#: 不限制时 Rn_Wm2 分位 89.0，限制后掉到 66.9 —— 那 22.1 分全是季节效应。
+#: （早期注释写 89.3 / 69.9，是「排除窗口」bug 修复前的旧值；红队复验·E2 已更正。
+#:  此处不再写死数字，实际值以日志为准。）
 SEASON_START_MIN: int = 804     # 8 月 4 日
 SEASON_START_MAX: int = 903     # 9 月 3 日
 
@@ -262,8 +266,12 @@ def tier1_anomaly(feats: pd.DataFrame, cols: list[str], log: list[str]) -> pd.Da
     med_by_hour, mad_by_hour = build_climatology(feats, cols, log)
 
     ev_start, ev_end = EVENT_START, EVENT_END
-    # 参考分布要剔除与事件窗口重叠的滑窗，否则事件窗会污染自己的参照系
-    excl = (ev_start - pd.Timedelta(hours=WIN_HOURS), ev_end)
+    # 参考分布要剔除与事件窗口重叠的滑窗，否则事件窗会污染自己的参照系。
+    # 窗口 [t0, t0+178h] 与事件窗重叠 ⟺ t1 >= ev_start 且 t0 <= ev_end，
+    # window_means 内部正是这个判据，所以直接传事件窗两端。
+    # 【红队复核·中1】早期版本误写为 (ev_start − 179h)，
+    # 额外排除了 8/05–8/11 共 7 个起点——恰是离事件最近的同季对照，必须保留。
+    excl = (ev_start, ev_end)
 
     rows: list[dict[str, object]] = []
     for c in cols:
@@ -528,7 +536,8 @@ def loyo_extreme(feats: pd.DataFrame, cols: list[str], t1: pd.DataFrame,
             "loyo_median": float(np.median(hist_ok)),
             "loyo_max": float(np.max(hist_ok)),
             "is_extreme": bool(ev > np.max(hist_ok)),
-            # 只有 5 个历史参考值 → p 的下限是 1/6，给不了"显著"，但能证伪
+            # 历史参考值最多 5 个 → p 的下限是 1/(n+1)（n=5 时 16.7%，n=4 时 20.0%），
+            # 给不了"显著"，但能证伪
             "p_loyo": float((1 + int(np.sum(hist_ok >= ev))) / (len(hist_ok) + 1)),
         })
     log.append(f"   LOYO：{len(LOYO_YEARS)} 个历史同日历窗参与对照"
@@ -665,8 +674,17 @@ def main() -> int:
             f"{pf:>9.1f}{_direction_label(r['event_zbar']):<8}  {'✓' if r['sig'] else ''}")
     add("")
     add("   ★「全年分位」是敏感性对照：两者差距越大，说明该特征的高分位越依赖季节效应。")
-    add("     典型例子：Rn_Wm2 由全年 89.3 降到同季 69.9（Δ −19.5）、")
-    add("             PDD_hourly 由 87.5 降到 69.9（Δ −17.6）—— 名次来自季节，不是事件。")
+    # 红队复验·E2：这里曾硬编码「Rn 89.3→69.9、PDD 87.5→69.9」——那是修复「排除窗口」
+    # bug 之前的旧值，与当前产物脱节（实测 89.0→66.9、87.3→68.7）。改为从结果表动态取数。
+    for _fn in ("Rn_Wm2", "PDD_hourly"):
+        _rr = t1[t1["feature"] == _fn]
+        if len(_rr) and np.isfinite(_rr["percentile_full"].iloc[0]) \
+                and np.isfinite(_rr["percentile"].iloc[0]):
+            _r = _rr.iloc[0]
+            # 红队复验·E7：与报告 §3.2 对齐到两位小数，避免日志/文档精度不一致
+            add(f"     典型例子：{_fn} 由全年 {_r['percentile_full']:.2f} 降到同季 "
+                f"{_r['percentile']:.2f}（Δ {_r['percentile'] - _r['percentile_full']:+.2f}）"
+                f"—— 名次来自季节，不是事件。")
     add("")
 
     # 无法计算分位的特征（MAD=0 或参考窗为空）
@@ -683,6 +701,11 @@ def main() -> int:
         add("   Albedo 在太阳高度角低时无定义（Rsd ≤ 50 时置 NaN）。")
         add("   这不是本方法的失败，而是这些量本身没有可标准化的逐钟点变异。")
         add("")
+
+    # 提前算出物理通道：多重检验的「口径 B」与后面的 Tier 3 都要用，
+    # 不能只在一个地方算——红队复核指出旧版在这里把 m 错当成 33。
+    corr, cl = channel_clusters(feats, cols, REDUNDANCY_RHO)
+    t1 = t1.merge(cl, on="feature", how="left")
 
     # ---------- 多重检验校正 + LOYO ----------
     add("-" * 78)
@@ -712,46 +735,96 @@ def main() -> int:
     add(f"     纯噪声期望假发现 = {n_test * 0.05:.2f}")
     add("")
 
+    # 口径 B：只检验「有代表可评」的通道。m = 有可评估代表元的通道数，
+    # 不是通道总数（红队复核·中3：16 个通道里有 3 个无代表，m 实为 13）。
+    reps_bh = (t1[t1["p_empirical"].notna()]
+               .sort_values("p_empirical")
+               .groupby("cluster", as_index=True).head(1))
+    m_chan = int(reps_bh["cluster"].nunique())
+    p_chan = reps_bh["p_empirical"].to_numpy(dtype=float)
+    t1["bh_pass_chan"] = False
+    t1.loc[reps_bh.index, "bh_pass_chan"] = bh_reject(p_chan, FDR_Q)
+    add(f"   口径 B：m = {m_chan} 个有可评估代表的通道"
+        f"（共 {int(cl['cluster'].nunique())} 个通道，"
+        f"{int(cl['cluster'].nunique()) - m_chan} 个因 MAD=0 无代表，不计入）")
+    add(f"     BH-FDR 通过 = {int(t1['bh_pass_chan'].sum())}")
+    add("     BH 阈值对照（形如 p_(k) ≤ k/m·q）：")
+    for k, pk in enumerate(np.sort(p_chan)[:6], start=1):
+        thr = FDR_Q * k / m_chan
+        add(f"       第 {k} 小 p = {pk:.4f}   阈值 = {thr:.5f}   "
+            f"{'✓ 通过' if pk <= thr else '× 未通过'}")
+    add("")
+
     # LOYO 六年交叉
     loyo = loyo_extreme(feats, cols, t1, log)
     t1 = t1.merge(loyo, on="feature", how="left")
 
     n_ext = int(t1["is_extreme"].fillna(False).sum())
     n_eval_loyo = int(t1["p_loyo"].notna().sum())
+    # 【红队复核·中4】随机期望必须按每个特征自己的历史年数 1/(n+1) 求和，
+    # 不能一刀切除以 6；且观测数要同时报「特征数」和「覆盖通道数」。
+    exp_hits_feat = float((1.0 / (t1.loc[t1["p_loyo"].notna(), "loyo_n"] + 1)).sum())
+    ext_feat = t1[t1["is_extreme"].fillna(False)]
+    # 仅作参考：按「簇覆盖」计（一个簇里任一特征命中就算），与分母不同源
+    n_ext_chan_cover = int(ext_feat["cluster"].nunique()) if len(ext_feat) else 0
+    reps_loyo = (t1[t1["p_loyo"].notna()]
+                 .sort_values("p_empirical")
+                 .groupby("cluster", as_index=True).head(1))
+    exp_hits_chan = float((1.0 / (reps_loyo["loyo_n"] + 1)).sum())
+    # 【红队复验·E4】分子曾按「簇覆盖数」计、分母按「代表元」计，口径混用。
+    # 统一为「代表元」口径：只计代表元自身命中，E[观测] = Σ 1/(n_i+1) 才与分母自洽。
+    n_ext_chan = int(reps_loyo["is_extreme"].fillna(False).sum())
+    # 14 个代表中 Albedo 无同季分位（不可评估）；另报 13 个可评估代表的口径
+    reps_eval = reps_loyo[reps_loyo["percentile"].notna()]
+    exp_hits_chan13 = float((1.0 / (reps_eval["loyo_n"] + 1)).sum())
+    n_ext_chan13 = int(reps_eval["is_extreme"].fillna(False).sum())
     add("")
     add("   LOYO 留一年交叉：逐年留出 2021–2025 同日历窗（8/19 起 179 h），")
-    add("   用其余 4 年建气候态 → 逐年得到 1 个样本外参考值，共 5 个。")
-    add("   随机情况下每特征命中「六年之最」的概率 = 1/6 ≈ 16.7%。")
+    add("   用其余 4 年建气候态 → 逐年得到 1 个样本外参考值。")
+    add("   ★ 各特征有效历史年数不同（缺测所致），命中概率 = 1/(loyo_n + 1)，")
+    add("     期望命中数须按各自年数求和，不能一刀切除以 6。")
     add("")
-    add(f"   {'feature':<24}{'事件 z̄':>9}{'历年中位':>10}{'历年最大':>10}"
-        f"{'六年之最':>10}{'p_loyo':>9}")
+    add(f"   {'feature':<24}{'事件 z̄':>9}{'有效年数':>9}{'历年中位':>10}{'历年最大':>10}"
+        f"{'为N年之最':>10}{'p_loyo':>9}")
     for _, r in t1.dropna(subset=["p_loyo"]).nsmallest(12, "p_loyo").iterrows():
-        add(f"   {r['feature']:<24}{r['event_zbar']:>9.3f}{r['loyo_median']:>10.3f}"
-            f"{r['loyo_max']:>10.3f}{('是' if r['is_extreme'] else '否'):>10}"
-            f"{r['p_loyo']:>9.3f}")
+        n_y = int(r["loyo_n"])
+        add(f"   {r['feature']:<24}{r['event_zbar']:>9.3f}{n_y:>9}"
+            f"{r['loyo_median']:>10.3f}{r['loyo_max']:>10.3f}"
+            f"{('是' if r['is_extreme'] else '否'):>10}{r['p_loyo']:>9.3f}")
     add("")
-    add(f"   可评估 {n_eval_loyo} 个特征，其中 {n_ext} 个是「六年之最」")
-    add(f"   随机期望（按特征）= {n_eval_loyo / 6:.1f} 个")
+    add(f"   可评估 {n_eval_loyo} 个特征：")
+    add(f"     观测「为N年之最」= {n_ext} 个特征"
+        f"（簇覆盖 {n_ext_chan_cover} 个通道；代表元自身命中 {n_ext_chan} 个）")
+    add(f"     随机期望：按特征 = {exp_hits_feat:.2f} 个；"
+        f"按通道代表（14 个，含不可评估的 Albedo）= {exp_hits_chan:.2f} 个；"
+        f"按可评估代表（13 个）= {exp_hits_chan13:.2f} 个")
+    add(f"     -> 观测/期望（按特征）= {n_ext / max(exp_hits_feat, 1e-9):.2f}；"
+        f"按通道代表 14 = {n_ext_chan / max(exp_hits_chan, 1e-9):.2f}；"
+        f"按可评估代表 13 = {n_ext_chan13 / max(exp_hits_chan13, 1e-9):.2f}")
+    add("     ★ 分子分母已统一为「代表元」口径（E4）：簇覆盖数按簇计，与分母不同源，仅作参考。")
     add("")
-    add("   ★ p_loyo 下限是 1/6（只有 5 个历史参考值），所以它给不了「显著」，")
-    add("     它的作用是**证伪**：连六年最大都做不到的特征不能叫前兆。")
+    add("   ★ p_loyo 下限 = 1/(loyo_n+1)，所以它给不了「显著」，")
+    add("     它的作用是**证伪**：连 N 年最大都做不到的特征不能叫前兆。")
     add("")
 
     add("   ★★ 判定结论：")
     add(f"     未校正达到 ≥{SIG_PERCENTILE} 分位的 = {int(t1['sig'].sum())} 个；")
     add(f"     纯噪声期望 = {n_test * 0.05:.2f} 个；")
-    if int(t1["bh_pass"].sum()) == 0:
-        p_min = float(np.nanmin(p_all[eval_mask]))
-        m_chan = int(t1["cluster"].nunique()) if "cluster" in t1.columns else n_test
-        add(f"     **BH-FDR 通过 = 0 个**（最强 p = {p_min:.4f}，"
-            f"通道口径阈值 = {FDR_Q / max(m_chan, 1):.5f}）。")
+    p_min = float(np.nanmin(p_all[eval_mask]))
+    add(f"     最强 p = {p_min:.4f}")
+    add(f"     口径 A（{n_test} 特征）BH 首阈值 = {FDR_Q / n_test:.5f}，"
+        f"比值 = {p_min / (FDR_Q / n_test):.2f} 倍")
+    add(f"     口径 B（{m_chan} 通道）BH 首阈值 = {FDR_Q / m_chan:.5f}，"
+        f"比值 = {p_min / (FDR_Q / m_chan):.2f} 倍")
+    if int(t1["bh_pass"].sum()) == 0 and int(t1["bh_pass_chan"].sum()) == 0:
         add("")
-        add("     => 不得写「前兆信号成立」。能报告的是排序本身，")
-        add("        并把最强候选明确标注为「**未通过多重检验校正的提名项**」。")
-        add("        提名资格 = 同季参考 ≥95 分位 且 LOYO 六年之最。")
+        add("     => 两个口径下 BH-FDR 通过均为 0。**不得写「前兆信号成立」**。")
+        add("        能报告的是排序本身，并把最强候选明确标注为")
+        add("        「**未通过多重检验校正的提名项**」。")
+        add("        提名资格 = 同季参考 ≥95 分位 且 LOYO「为N年之最」。")
     else:
-        add(f"     BH-FDR 通过 {int(t1['bh_pass'].sum())} 个：" +
-            ", ".join(t1.loc[t1["bh_pass"], "feature"]))
+        add("     BH-FDR 通过的特征：" +
+            ", ".join(t1.loc[t1["bh_pass"] | t1["bh_pass_chan"], "feature"]))
     add("")
 
     # ---------- Tier 2 标注 ----------
@@ -777,7 +850,7 @@ def main() -> int:
     add("-" * 78)
     add(f"[5] Tier 3：冗余抑制（|Spearman| ≥ {REDUNDANCY_RHO} 单链接聚类）")
     add("-" * 78)
-    corr, cl = channel_clusters(feats, cols, REDUNDANCY_RHO)
+    # 聚类已在 [3] 前完成（多重检验的口径 B 需要它），此处直接复用，不重算
     n_cl = cl["cluster"].nunique()
     add(f"   特征 {len(cols)} 个 -> 物理通道 {n_cl} 个（阈值 |ρ| ≥ {REDUNDANCY_RHO}）")
     add("")
@@ -792,8 +865,8 @@ def main() -> int:
     add("")
     add("   通道明细：")
     extra = ["feature", "percentile", "event_zbar", "p_empirical", "sig",
-             "percentile_full", "p_empirical_full", "bh_pass", "is_extreme",
-             "loyo_max", "p_loyo"]
+             "percentile_full", "p_empirical_full", "bh_pass", "bh_pass_chan",
+             "is_extreme", "loyo_n", "loyo_max", "p_loyo"]
     merged = cl.merge(t1[[c for c in extra if c in t1.columns]],
                       on="feature", how="left")
     merged = merged.merge(t2[["feature", "tier2_driver"]], on="feature", how="left")
@@ -820,18 +893,21 @@ def main() -> int:
     add("[6] 通道去冗余后的最终排序")
     add("-" * 78)
     add(f"   {'rank':>4} {'feature':<24}{'通道':>5}{'同季分位':>9}{'z̄':>9}{'p经验':>9}"
-        f"{'方向':<8}{'六年之最':>9}{' FDR':>6}{'Tier2'}")
+        f"{'方向':<8}{'N年之最':>9}{' FDR':>6}{'Tier2'}")
     for _, r in reps.head(20).iterrows():
         direction = _direction_label(r["event_zbar"])
         bh = r.get("bh_pass", False)
         ext = r.get("is_extreme", False)
+        ny = int(r["loyo_n"]) + 1 if np.isfinite(r.get("loyo_n", np.nan)) else 0
+        ext_lab = (f"{ny}年之最" if (ext and ny) else "否")
         add(f"   {int(r['final_rank']):>4} {r['feature']:<24}{int(r['cluster']):>5}"
             f"{r['percentile']:>9.1f}{r['event_zbar']:>9.3f}{r['p_empirical']:>9.4f}"
-            f"{direction:<8}{('是' if ext else '否'):>9}"
+            f"{direction:<8}{ext_lab:>9}"
             f"{('✓' if bh else '×'):>6}{r['tier2_driver'] or '-'}")
     add("")
-    add("   ★ 「FDR」列 = 是否通过 BH-FDR q=0.05；「六年之最」= LOYO 留一年交叉结果。")
-    add("     提名资格 = 同季分位 ≥95 **且** LOYO 六年之最。**两者都是不等于通过 FDR**。")
+    add("   ★ 「FDR」列 = 是否通过 BH-FDR q=0.05（特征口径）；")
+    add("     「N年之最」= LOYO 留一年交叉结果，N = 有效历史年数 + 1（缺测所致，非全为 6）。")
+    add("     提名资格 = 同季分位 ≥95 **且** LOYO「N年之最」。**两者都是不等于通过 FDR**。")
     add("     z̄ > 0 = 事件窗高于气候态（正向异常）；z̄ < 0 = 低于气候态（负向异常）。")
     add("     分位高 + z̄ 为负，意味着「比平时更负」——是负向异常的极端，")
     add("     不能解读为「该量升高导致灾害」。这一区分对偏斜分布尤其重要。")
@@ -840,7 +916,8 @@ def main() -> int:
     top5 = reps.head(5).copy()
     add("   ★ 最终 Top-5（保证覆盖 5 个不同物理通道）：")
     for _, r in top5.iterrows():
-        ext = "六年之最" if r.get("is_extreme", False) else "—"
+        ny = int(r["loyo_n"]) + 1 if np.isfinite(r.get("loyo_n", np.nan)) else 0
+        ext = (f"{ny}年之最" if (r.get("is_extreme", False) and ny) else "—")
         add(f"     {int(r['final_rank'])}. {r['feature']:<24} "
             f"通道{int(r['cluster'])}  同季分位={r['percentile']:.1f}  "
             f"z̄={r['event_zbar']:+.3f}  {r['tier2_driver'] or '-'}  {ext}")
@@ -849,7 +926,7 @@ def main() -> int:
     # 对比口径取 Top-10：同季参考下 Top-5 恰好已覆盖 5 个通道，去冗余不起作用，
     # 到 Top-10 才显现（同源的 Se/VWC 开始挤占名额）。这一事实须如实写明。
     raw_top5 = t1.dropna(subset=["percentile"]).nlargest(10, "percentile")
-    raw_top5 = raw_top5.merge(cl, on="feature", how="left")
+    # t1 已在 [3] 前 merge 过 cl，自带 cluster 列，此处不再需要 merge
     n_raw_ch = raw_top5["cluster"].nunique()
     n_new_ch = int(reps.head(10)["cluster"].nunique())
     add("-" * 78)
@@ -892,8 +969,9 @@ def main() -> int:
     # ---------- 落盘 ----------
     TAB_DIR.mkdir(parents=True, exist_ok=True)
     FIG_DIR.mkdir(parents=True, exist_ok=True)
+    # 【红队复验·E5】t1 在上方 [3] 之前已 merge 过 cl，这里再 merge 一次会产出
+    # 值相同却分裂成 cluster_x / cluster_y 的重复列。直接复用 t1 已有的 cluster。
     out1 = t1.merge(t2, on="feature", how="left").merge(
-        cl, on="feature", how="left").merge(
         reps[["feature", "final_rank"]], on="feature", how="left")
     out1.to_csv(TAB_DIR / "b3_tier1_anomaly.csv", index=False, encoding="utf-8-sig")
     cl.merge(t2, on="feature", how="left").to_csv(
@@ -960,20 +1038,22 @@ def main() -> int:
     add("[结论]")
     add("-" * 78)
     add(f"  参与排名特征 = {len(cols)}   物理通道 = {n_cl}"
-        f"   可评估 = {n_test}")
+        f"   可评估特征 = {n_test}   可评估通道 = {m_chan}")
     add(f"  同季参考 ≥{SIG_PERCENTILE} 分位（未校正） = {int(t1['sig'].sum())}"
         f"   纯噪声期望 = {n_test * 0.05:.2f}")
-    add(f"  BH-FDR(q={FDR_Q}) 通过 = {int(t1['bh_pass'].sum())}"
-        f"   Bonferroni 通过 = {int(t1['bonf_pass'].sum())}")
-    add(f"  LOYO 六年之最 = {int(t1['is_extreme'].fillna(False).sum())} 个")
+    add(f"  BH-FDR(q={FDR_Q}) 通过：特征口径 = {int(t1['bh_pass'].sum())}"
+        f"   通道口径 = {int(t1['bh_pass_chan'].sum())}"
+        f"   Bonferroni(特征口径) = {int(t1['bonf_pass'].sum())}")
+    add(f"  LOYO「N年之最」 = {int(t1['is_extreme'].fillna(False).sum())} 个特征"
+        f"（有效年数各异，见 [3]）")
     add(f"  Top-5 = {', '.join(top5['feature'].tolist())}")
     add("")
     n_nom = int(((t1["sig"]) & (t1["is_extreme"].fillna(False))).sum())
     nom = t1[(t1["sig"]) & (t1["is_extreme"].fillna(False))]
-    add(f"  ★ 提名项（同季 ≥95 分位 且 LOYO 六年之最）= {n_nom} 个：" +
+    add(f"  ★ 提名项（同季 ≥95 分位 且 LOYO「N年之最」）= {n_nom} 个：" +
         (", ".join(nom["feature"].tolist()) if n_nom else "无"))
-    if int(t1["bh_pass"].sum()) == 0:
-        add("  ★★ 无任何特征通过 BH-FDR —— 论文中只能写「提名项」，")
+    if int(t1["bh_pass"].sum()) == 0 and int(t1["bh_pass_chan"].sum()) == 0:
+        add("  ★★ 无任何特征/通道通过 BH-FDR —— 论文中只能写「提名项」，")
         add("     禁止写「前兆信号成立」。")
     add(f"  总耗时 = {time.time() - t_all:.1f}s")
 
