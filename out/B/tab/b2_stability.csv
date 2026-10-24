@@ -1,39 +1,41 @@
-﻿feature,top5_freq
-L_Obukhov,1.0
-zeta_10m,1.0
-Inversion_Hours_Day,1.0
-Bowen_beta,0.874
-Melt_mm_h,0.416
-API_10,0.406
-PDD_hourly,0.194
-Rn_Wm2,0.1
-Se_0.2m,0.01
-Ri_b_1_20,0.0
-Inversion_Gamma,0.0
-Ri_b_2_20,0.0
-EBR,0.0
-EF,0.0
-API_30,0.0
-Precip_mm,0.0
-Albedo,0.0
-Se_0.1m,0.0
-VWC_0.1m,0.0
-VWC_0.2m,0.0
-Se_0.4m,0.0
-VWC_0.4m,0.0
-Se_0.8m,0.0
-VWC_0.8m,0.0
-Se_1.6m,0.0
-VWC_1.6m,0.0
-dTheta_dt_0.1m,0.0
-dTheta_dt_0.1m_6h,0.0
-SoilT_grad_0.1_0.4,0.0
-SoilT_grad_0.8_1.6,0.0
-G_0.1m,0.0
-FT_crossings_day,0.0
-FT_hours_below_day,0.0
-USTAR,0.0
-TKE,0.0
-FETCH_90,0.0
-H_Wm2,0.0
-LE_Wm2,0.0
+﻿,top5_frequency,n_bootstrap,block_hours,method
+VWC_0.2m,0.92,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+Se_0.1m,0.828,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+VWC_0.1m,0.796,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+Se_0.2m,0.75,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+SoilT_grad_0.8_1.6,0.732,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+PDD_cumsum,0.444,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+VWC_1.6m,0.22,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+Se_1.6m,0.126,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+API_10,0.066,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+API_30,0.062,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+Se_0.4m,0.032,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+Inversion_Hours_Day,0.018,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+Se_0.8m,0.004,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+VWC_0.4m,0.002,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+L_Obukhov,0.0,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+Ri_b_1_20,0.0,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+Bowen_beta,0.0,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+Rn_Wm2,0.0,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+Inversion_Gamma,0.0,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+Ri_b_2_20,0.0,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+zeta_10m,0.0,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+PDD_hourly,0.0,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+Albedo,0.0,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+EBR,0.0,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+Ta_2m_K,0.0,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+Melt_mm_h,0.0,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+Z0C_m,0.0,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+EF,0.0,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+Precip_mm,0.0,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+VWC_0.8m,0.0,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+dTheta_dt_0.1m_6h,0.0,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+SoilT_grad_0.1_0.4,0.0,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+G_0.1m,0.0,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+FT_crossings_day,0.0,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+FT_hours_below_day,0.0,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+USTAR,0.0,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+TKE,0.0,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+FETCH_90,0.0,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+H_Wm2,0.0,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy
+LE_Wm2,0.0,500,72,exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy

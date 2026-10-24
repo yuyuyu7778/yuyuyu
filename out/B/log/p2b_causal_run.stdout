@@ -32,3 +32,117 @@ SELF_CHECK: PASS（窗口、dCor 矩阵对照、KSG 基本行为、72h 块、24h
   证据 30/40 dTheta_dt_0.1m_6h
   证据 31/40 SoilT_grad_0.1_0.4
   证据 32/40 SoilT_grad_0.8_1.6
+  证据 33/40 G_0.1m
+  证据 34/40 FT_crossings_day
+  证据 35/40 FT_hours_below_day
+  证据 36/40 USTAR
+  证据 37/40 TKE
+  证据 38/40 FETCH_90
+  证据 39/40 H_Wm2
+  证据 40/40 LE_Wm2
+[2/5] 72h block bootstrap
+  bootstrap 1/500
+  bootstrap 25/500
+  bootstrap 50/500
+  bootstrap 75/500
+  bootstrap 100/500
+  bootstrap 125/500
+  bootstrap 150/500
+  bootstrap 175/500
+  bootstrap 200/500
+  bootstrap 225/500
+  bootstrap 250/500
+  bootstrap 275/500
+  bootstrap 300/500
+  bootstrap 325/500
+  bootstrap 350/500
+  bootstrap 375/500
+  bootstrap 400/500
+  bootstrap 425/500
+  bootstrap 450/500
+  bootstrap 475/500
+  bootstrap 500/500
+[3/5] 24h 循环移位负对照（重算全部证据）
+  证据  1/40 L_Obukhov
+  证据  2/40 zeta_10m
+  证据  3/40 Ri_b_1_20
+  证据  4/40 Ri_b_2_20
+  证据  5/40 Inversion_Gamma
+  证据  6/40 Inversion_Hours_Day
+  证据  7/40 Rn_Wm2
+  证据  8/40 Bowen_beta
+  证据  9/40 EF
+  证据 10/40 EBR
+  证据 11/40 Albedo
+  证据 12/40 Precip_mm
+  证据 13/40 API_10
+  证据 14/40 API_30
+  证据 15/40 PDD_hourly
+  证据 16/40 PDD_cumsum
+  证据 17/40 Melt_mm_h
+  证据 18/40 Ta_2m_K
+  证据 19/40 Z0C_m
+  证据 20/40 Se_0.1m
+  证据 21/40 VWC_0.1m
+  证据 22/40 Se_0.2m
+  证据 23/40 VWC_0.2m
+  证据 24/40 Se_0.4m
+  证据 25/40 VWC_0.4m
+  证据 26/40 Se_0.8m
+  证据 27/40 VWC_0.8m
+  证据 28/40 Se_1.6m
+  证据 29/40 VWC_1.6m
+  证据 30/40 dTheta_dt_0.1m_6h
+  证据 31/40 SoilT_grad_0.1_0.4
+  证据 32/40 SoilT_grad_0.8_1.6
+  证据 33/40 G_0.1m
+  证据 34/40 FT_crossings_day
+  证据 35/40 FT_hours_below_day
+  证据 36/40 USTAR
+  证据 37/40 TKE
+  证据 38/40 FETCH_90
+  证据 39/40 H_Wm2
+  证据 40/40 LE_Wm2
+[4/5] 写表与图
+==============================================================================
+P2 Q1 客观连续响应的四证据排序
+==============================================================================
+运行时间戳: 2026-10-24T21:23:09.774639+08:00
+Python 3.12.9 / numpy 2.5.3 / pandas 3.0.5
+SEED=42; TE perms=99; bootstrap=500
+连续响应: dTheta_dt_0.1m（实测 VWC_0.1m 的逐时差分，不是人工综合指数）
+原二值窗口响应在分段内满足 A_t=A_lag，TE 条件互信息恒零；故不作为 TE/PCMCI 响应。
+前兆窗=2026-08-19 00:00--2026-08-26 10:00（含首尾 179h）
+背景窗=2021--2025 每年同历日同时段，每年 179h，总计 895h；不跨年构造滞后。
+TE: KSG k=5，1--24h；条件局部置换；逐滞后 p<0.05 取最大，并另给 maxT 校正。
+PCMCI+: 双变量 ParCorr，alpha=0.05；仅计显著 X->A 边。
+dCor/lambda: 六窗内 X 与前兆窗指示；lambda_U=P(V>.9|U>.9)。
+KL: 50 箱 P_event||P_background；马氏距离为一维 |均值差|/背景标准差。
+因果限制: 双变量探索性统计，不排除未观测混杂，不等于灾害因果识别。
+tigramite=5.2.10.1（已安装，未执行安装）
+Borda 排除 dTheta_dt_0.1m: 连续响应自身：不作为自身原因参与 Borda
+参与计算特征 40；主表保留全部输入特征。
+
+Top-5（Borda 四组等权秩，越小越好）:
+  1. Inversion_Gamma: rank_sum=36.50, TE=0.35095, PCMCI=0.11524, dCor=0.097207, KL=0.15217, boot=0.000
+  1. PDD_cumsum: rank_sum=36.50, TE=0.22396, PCMCI=0.096708, dCor=0.68606, KL=6.6, boot=0.444
+  3. SoilT_grad_0.8_1.6: rank_sum=40.50, TE=0.22156, PCMCI=0.077734, dCor=0.66978, KL=4.0542, boot=0.732
+  4. Albedo: rank_sum=41.50, TE=0.32085, PCMCI=0.16704, dCor=0.14952, KL=0.2591, boot=0.000
+  5. EF: rank_sum=48.00, TE=0.27245, PCMCI=0.10361, dCor=0.072106, KL=0.14372, boot=0.000
+
+24h 负对照（单侧 Wilcoxon，real > shifted）:
+  te: n=37, real=0.224306, shifted=0.232682, median_drop=-1.681%, p=0.772431, FAIL
+  pcmci: n=13, real=0.105511, shifted=0.101544, median_drop=-0.375%, p=0.526978, FAIL
+  dcor: n=37, real=0.097909, shifted=0.111629, median_drop=-5.475%, p=0.994719, FAIL
+  lambda_u: n=24, real=0.202982, shifted=0.2, median_drop=0.000%, p=0.699552, FAIL
+  kl: n=37, real=0.180123, shifted=0.214883, median_drop=-2.885%, p=0.933353, FAIL
+  mahalanobis: n=37, real=0.188899, shifted=0.260957, median_drop=-2.100%, p=0.925468, FAIL
+注意：24h 移位保留日周期；窗内循环移位还不改变 KL/马氏距离的边缘分布，因此负对照失败不能通过改块长掩盖。
+
+bootstrap 口径：依赖与分布偏移逐次重算；TE 固定原邻域仅重采样局部贡献；PCMCI 用主分析所选滞后上的偏相关代理。后两项为近似，稳定性可能偏乐观。
+
+NEGATIVE_CONTROL: FAIL
+结论口径：四证据 Top-5 已生成，但仅作探索性排序；负对照失败时不作已验证因果结论。
+总耗时: 2974.5s
+输出: b2_ranking_full.csv / b2_top5_consensus.csv / b2_stability.csv / b2_negative_control.csv / b2_te_lags.csv / b2_pcmci_network.csv
+图: b2_causal_network.png / b2_stability_bar.png / b2_negative_control.png
