@@ -1,968 +1,888 @@
-"""Q1 因果发现与关联共识排序（方案 E：特征间因果网络）。
+"""Q1：客观响应锚点上的四证据排序、稳定性与 24 h 负对照。
 
-对应 CLAUDE_B.md 第三节 Q1 第 2–3 条，以及用户补充约束 1–5。
+响应变量不使用人工综合指数。按本轮确认，TE/PCMCI+ 的连续响应是
+``A_t = dTheta_dt_0.1m = VWC_0.1m(t) - VWC_0.1m(t-1)``，即实测浅层
+土壤含水量的逐时变化。窗口指示只用于 dCor/尾依赖；KL/马氏距离直接比较：
 
-## 设计演进（如实记录，见 out/B/log/p2b_causal.log）
+* 前兆窗：2026-08-19 00:00 至 2026-08-26 10:00，含首尾，共 179 h；
+* 背景窗：2021--2025 每年相同的 179 h，不跨年构造滞后。
 
-原设计用「事件窗口 0/1 指示」作因果锚点，经实测**两种锚点均失效**：
-  * 0/1 指示锚点：KSG kNN 条件互信息是连续变量估计器，二值条件变量使其退化；
-  * 事件倒计时锚点（方案 D）：锚点满足 a[t] = a[t-1] + 1，
-    条件在 a[t-τ] 上时 a[t] 被完全确定，因此 I(a_t; X_{t-τ} | a_{t-τ}) ≡ 0，
-    TE 在数学上恒为 0，与数据无关。
+不能沿用旧的窗口二值响应做 TE：在每个独立窗口内 A_t=A_{t-tau}，
+故 I(A_t;X_{t-tau}|A_{t-tau})=0。连续响应是为消除该数学退化而调整的口径，
+不是事件灾害过程的因果证明。双变量 PCMCI+ 仍可能受未观测混杂影响。
 
-经用户批准改用**方案 E：特征间因果网络排序**，并采用**全期训练 + 事件窗口偏移**：
-  * TE / PCMCI / dCor 在全期（2021–2026，46768 有效小时）上计算，保证 n_eff 充足；
-  * 分布偏移证据（KL / 马氏距离）在事件窗口 vs 气候背景上计算，捕捉事件特异性；
-  * 因果方向证据由 PCMCI 特征间网络给出（入度/出度），不依赖任何人造锚点。
+四类证据：
+1. KSG/Frenzel--Pompe kNN 条件互信息 TE，k=5，逐时滞后 1--24；
+   条件局部置换检验，另给全滞后 maxT 校正；仅在显著滞后中取最大 TE。
+2. 双变量 PCMCI+/ParCorr，alpha=0.05，六个独立时段共同估计；
+   强度为显著 X(t-tau)->A(t) 边的最大 |MCI|。tigramite 不可用时，
+   回退为三阶符号化 TE + 滞后偏相关，并在结果中明确标记。
+3. 精确一维 dCor（Fenwick 树 O(n log n)）与 u>0.9 经验 copula 尾依赖。
+4. 50 箱 KL(P_event||P_background) 与一维马氏距离 |mu_e-mu_b|/sigma_b。
 
-## 四类证据
+Borda 使用 TE、PCMCI、(dCor,lambda_U)、(KL,Mahalanobis) 四组秩。
+500 次、72 h 块 bootstrap 中，dCor/尾依赖/KL/马氏距离均真正重算；
+TE 使用固定原邻域的逐点贡献重采样，PCMCI 使用同滞后偏相关代理，
+这两项是计算近似，不能写成“每次完整重跑 KSG/PCMCI+”。
 
-1. **TE（传递熵）**：对每个特征 X，计算它与「事件窗口内最强同步伙伴」之间的
-   TE，取事件窗口内 TE 总和作为「事件期间信息交换活跃度」。
-2. **PCMCI 网络**：全期特征间因果网络，统计出度（驱动他人）与入度（被驱动）。
-3. **dCor + 尾依赖 λ_U**：特征与「事件窗口指示」的非线性依赖 + 极端情形依赖。
-4. **分布偏移**：事件窗口 vs 5 年同期背景的 KL 散度与马氏距离。
+负对照把特征值相对共同时间轴整体循环移动 24 h（不是仅 roll 时间列），
+再重算所有证据。24 h 移位保留日周期，因此没有先验理由保证指标下降；
+不达标会明确输出 FAIL，不得改用其他块长来追求通过。
 
-## 用户补充约束的落实
+正式用法：python srcB/b2_q1_causal.py
+函数自检：python srcB/b2_q1_causal.py --check-only
+小样本测试必须指定独立输出目录，例如：
+  python srcB/b2_q1_causal.py --features Rn_Wm2,PDD_hourly --bootstrap 5 \
+      --te-perms 9 --output-root out/B/smoke_b2
 
-1. tigramite 5.2.10.1 已装，走 PCMCI+ 正式路径；
-2. 每个证据在自己有效样本上算，禁止统一 dropna()，每个统计量附 n_eff；
-3. 滞后 1–24 h 扫描 × 特征 → BH-FDR 校正，报告校正前后显著个数；
-4. Z0C_m（缺测 87%）不进排名，单列定性说明；
-5. 不迎合"强辐射"叙事，结果以数据为准。
-
-## 输出
-
-    out/B/tab/b2_ranking_full.csv       全特征 × 四证据（含 n_eff、FDR）
-    out/B/tab/b2_top5_consensus.csv     Top-5 共识
-    out/B/tab/b2_negative_control.csv   负对照
-    out/B/tab/b2_pcmci_network.csv      PCMCI 网络边列表
-    out/B/fig/b2_stability_bar.png      bootstrap 入选频率
-    out/B/fig/b2_negative_control.png   真实 vs 置换
-    out/B/fig/b2_pcmci_degree.png       网络入度/出度
-    out/B/log/p2b_causal.log            全部数字与判定
-
-AI 辅助声明：本文件由 Claude Code（Anthropic，2026-10-24）辅助生成，人工已复核。
-
-用法：
-    python srcB/b2_q1_causal.py
+AI 辅助声明：Claude Code（Anthropic，2026-10-24）辅助生成；统计口径及
+上述近似须在论文中如实披露。
 """
 
 from __future__ import annotations
 
+import argparse
+import importlib.metadata
 import sys
 import time
 import warnings
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from scipy import stats
+from scipy.spatial import cKDTree
+from scipy.special import digamma
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-
 from io_utils import SEED  # noqa: E402
 
-# --------------------------------------------------------------------------- #
-# 常量
-# --------------------------------------------------------------------------- #
-
-PROJECT_ROOT: Path = Path(__file__).resolve().parents[1]
-CLEAN_DIR: Path = PROJECT_ROOT / "data" / "B" / "clean"
-TAB_DIR: Path = PROJECT_ROOT / "out" / "B" / "tab"
-FIG_DIR: Path = PROJECT_ROOT / "out" / "B" / "fig"
-LOG_DIR: Path = PROJECT_ROOT / "out" / "B" / "log"
-
-#: 事件前兆窗口。
-EVENT_START: pd.Timestamp = pd.Timestamp("2026-08-19 00:00")
-EVENT_END: pd.Timestamp = pd.Timestamp("2026-08-26 10:00")
-
-#: 气候背景年份（剔除 2026）。
-BACKGROUND_YEARS: tuple[int, ...] = (2021, 2022, 2023, 2024, 2025)
-BG_MMDD_START: str = "08-19 00:00"
-BG_MMDD_END: str = "08-26 10:00"
-
-#: 滞后扫描范围（小时）。
-LAGS: tuple[int, ...] = tuple(range(1, 25))
-
-#: PCMCI 的 tau_max（计算量限制，取 6 h；TE 仍扫描 1–24 h）。
-PCMCI_TAU_MAX: int = 4
-
-#: PCMCI 时间抽样步长（小时）。全期 52584 行对 38 变量 PCMCI 太慢，
-#: 3 h 抽样使自相关接近独立，同时保留 17528 个样本。
-PCMCI_SUBSAMPLE: int = 3
-
-#: BH-FDR 显著性水平。
-ALPHA: float = 0.05
-
-#: block bootstrap。
-BOOT_BLOCK_HOURS: int = 72
-BOOT_N: int = 500
-
-#: KSG 近邻数。
-KSG_K: int = 5
-
-#: TE 置换检验次数。
-N_PERM: int = 40
-
-#: TE 计算的时间抽样步长（小时）。
-#: 全期 52584 行逐时序列的一阶自相关很高，抽样到 6 h 既能大幅降低算量，
-#: 又能让样本接近独立，减少 n_eff 折损。论文中须注明抽样步长。
-TE_SUBSAMPLE: int = 6
-
-#: TE 滞后扫描步长（小时）。
-#: 抽样间隔必须 ≥ 滞后步长，否则「滞后 2h」在 6h 抽样下没有实际时间分辨率。
-#: 6h 抽样 → 滞后 6/12/18/24 h 共 4 个点，覆盖作战地图要求的 1–24 h 范围。
-TE_LAG_STEP: int = 6
-
-#: 每个特征的候选 TE 伙伴数（先在事件窗口内按 |相关| 预筛）。
-TE_N_CANDIDATES: int = 2
-
-#: TE 置换检验次数（正式运行）。控制算量取 20。
-TE_N_PERM: int = 20
-
-#: TE 计算起始时间戳（用于进度日志）。
-_t0: float = 0.0
-
-#: dCor 的最大计算样本数。距离矩阵为 O(n²)，n=4000 时约 128 MB。
-#: 超过此值时无放回抽样。尾依赖 λ_U 仍用全样本。
-DCOR_MAX_N: int = 4000
-
-#: 负对照的块长（小时）。**刻意取 37 h（非 24 的整数倍）**：
-#: 24 h 的整倍数移位不会破坏日周期对齐，会导致负对照失效（实测下降仅 −1.2%）。
-NEG_BLOCK_HOURS: int = 37
-
-#: 不上排名的特征（用户约束 4 + 方法论理由）。
-EXCLUDED: dict[str, str] = {
-    "Z0C_m": "缺测率 87.29%（近地层外推本身不成立），仅作定性参考（用户约束 4）",
-    "PDD_cumsum": "累计量，ρ₁≡1，n_eff≈3，作为因果变量无意义；信息由 PDD_hourly / Melt_mm_h 承载",
-    "Ta_2m_K": "原始观测气温，未做物理重构；保留在特征表中供出图解释，不参与因果排名",
-}
-
-#: FLUX 分组（用户约束 2）。
-FLUX_FLUX_VARS: tuple[str, ...] = ("H_Wm2", "LE_Wm2", "Bowen_beta", "EF", "EBR")
-FLUX_MOMENTUM_VARS: tuple[str, ...] = ("USTAR", "TKE")
-
-#: 辐射类特征（用户约束 5，用于专项说明）。
-RADIATION_VARS: tuple[str, ...] = ("Rn_Wm2", "Albedo", "G_0.1m")
+ROOT = Path(__file__).resolve().parents[1]
+FEATURES_PATH = ROOT / "data" / "B" / "clean" / "features_hourly.csv"
+DEFAULT_OUT = ROOT / "out" / "B"
+RESPONSE = "dTheta_dt_0.1m"
+EVENT_START = pd.Timestamp("2026-08-19 00:00")
+EVENT_END = pd.Timestamp("2026-08-26 10:00")
+BACKGROUND_YEARS = (2021, 2022, 2023, 2024, 2025)
+LAGS = tuple(range(1, 25))
+KSG_K = 5
+TE_PERMUTATIONS = 99
+PCMCI_ALPHA = 0.05
+BOOTSTRAP_N = 500
+BOOT_BLOCK = 72
+NEGATIVE_SHIFT = 24
+TAIL_Q = 0.9
+KL_BINS = 50
 
 
-# --------------------------------------------------------------------------- #
-# 统计工具
-# --------------------------------------------------------------------------- #
+@dataclass
+class TEData:
+    """一个特征的全部滞后样本与 KSG 局部贡献缓存。"""
+
+    observed: np.ndarray
+    p_lag: np.ndarray
+    p_max_t: float
+    null_max: np.ndarray
+    local: dict[int, dict[int, tuple[np.ndarray, np.ndarray]]]
+    n_eff: int
+    raw_lag: int
+    raw_value: float
+    selected_lag: int | None
+    selected_value: float
 
 
-def effective_n(x: np.ndarray) -> float:
-    """有效样本数 n_eff = n·(1−ρ₁)/(1+ρ₁)（AR(1) 近似，Wilks 1997）。
+def windows_of(frame: pd.DataFrame) -> list[tuple[str, pd.DataFrame, bool]]:
+    """返回六个独立连续时段，第三项标记是否为 2026 前兆窗。"""
+    expected = pd.date_range(EVENT_START, EVENT_END, freq="h")
+    result = []
+    for year in (*BACKGROUND_YEARS, 2026):
+        start = EVENT_START.replace(year=year)
+        end = EVENT_END.replace(year=year)
+        part = frame.loc[start:end]
+        if not part.index.equals(pd.date_range(start, end, freq="h")):
+            raise ValueError(f"{year} 窗口不是完整逐时 179 点: {part.index.min()}--{part.index.max()}, n={len(part)}")
+        result.append((str(year), part, year == 2026))
+    return result
 
-    Args:
-        x: 一维序列（可含 NaN）。
 
-    Returns:
-        有效样本数，下限截断到 3。
+def _group_triples(windows, feature: str, lag: int, response: str = RESPONSE):
+    """构造 (A_t,X_{t-lag},A_{t-lag})，segment 防止跨年邻居与置换。"""
+    xs, ys, zs, groups, positions = [], [], [], [], []
+    for group, (_, part, _) in enumerate(windows):
+        x = part[feature].to_numpy(float)
+        y = part[response].to_numpy(float)
+        pos = np.arange(lag, len(part))
+        keep = np.isfinite(x[pos - lag]) & np.isfinite(y[pos]) & np.isfinite(y[pos - lag])
+        pos = pos[keep]
+        xs.append(x[pos - lag])
+        ys.append(y[pos])
+        zs.append(y[pos - lag])
+        groups.append(np.full(len(pos), group, dtype=int))
+        positions.append(pos - lag)
+    return tuple(np.concatenate(a) for a in (xs, ys, zs, groups, positions))
+
+
+def _rank_columns(a: np.ndarray) -> np.ndarray:
+    return np.column_stack([stats.rankdata(a[:, j], method="average") for j in range(a.shape[1])])
+
+
+def ksg_cmi(x: np.ndarray, y: np.ndarray, z: np.ndarray, groups: np.ndarray,
+            k: int = KSG_K, seed: int = SEED, return_local: bool = False):
+    """Frenzel--Pompe 条件 KSG，邻居严格限制在各自连续时段内。
+
+    估计 I(X;Y|Z)=psi(k)-mean[psi(n_XZ)+psi(n_YZ)-psi(n_Z)]。
+    使用 Chebyshev 距离、k 邻域半径的严格开球及微小固定种子 jitter 处理并列。
     """
-    x = np.asarray(x, dtype=float)
-    x = x[np.isfinite(x)]
-    n = len(x)
-    if n < 10:
-        return float(n)
-    rho1 = float(np.corrcoef(x[:-1], x[1:])[0, 1])
-    if not np.isfinite(rho1):
-        return float(n)
-    rho1 = max(min(rho1, 0.999), -0.999)
-    return float(max(n * (1.0 - rho1) / (1.0 + rho1), 3.0))
-
-
-def bh_fdr(pvals: np.ndarray, alpha: float = ALPHA) -> tuple[np.ndarray, np.ndarray]:
-    """Benjamini–Hochberg FDR 校正。
-
-    Args:
-        pvals: 原始 p 值（可含 NaN）。
-        alpha: 目标 FDR。
-
-    Returns:
-        ``(reject, qvals)``。
-    """
-    p = np.asarray(pvals, dtype=float)
-    n = len(p)
-    reject = np.zeros(n, dtype=bool)
-    q = np.full(n, np.nan)
-    valid = np.isfinite(p)
-    if not valid.any():
-        return reject, q
-    idx = np.where(valid)[0]
-    pv = p[idx]
-    m = len(pv)
-    order = np.argsort(pv)
-    ranked = pv[order]
-    qv = ranked * m / np.arange(1, m + 1)
-    qv = np.minimum.accumulate(qv[::-1])[::-1]
-    out = np.empty(m)
-    out[order] = np.clip(qv, 0.0, 1.0)
-    q[idx] = out
-    reject[idx] = out <= alpha
-    return reject, q
-
-
-def block_permute(x: np.ndarray, block: int, rng: np.random.Generator) -> np.ndarray:
-    """时间块随机重排：保留块内自相关，破坏跨变量的时序对齐。
-
-    **关键设计约束**：块长不能是 24 h 的整数倍。气象与土壤变量都有强烈的
-    日周期，若按 24 h 的整倍数循环移位，两个序列的日周期仍严格对齐，
-    负对照几乎不会导致 TE 下降（实测块长 24 h 时中位下降仅 −1.2%）。
-    因此默认块长取 24 h 的整数倍以外的值（见 :data:`NEG_BLOCK_HOURS`），
-    且采用**随机块顺序**而非简单循环移位。
-
-    Args:
-        x: 一维序列。
-        block: 块长（小时），建议取非 24 的整数倍。
-        rng: 随机数生成器。
-
-    Returns:
-        重排后的序列（长度不变）。
-    """
-    n = len(x)
-    if n <= block:
-        return x.copy()
-    nb = int(np.ceil(n / block))
-    blocks = [x[i * block:(i + 1) * block] for i in range(nb)]
-    order = rng.permutation(nb)
-    return np.concatenate([blocks[i] for i in order])[:n]
-
-
-def ar_residual_surrogate(x: np.ndarray, order: int, rng: np.random.Generator) -> np.ndarray:
-    """AR(p) 残差置换零模型（用户批准的负对照方案 1）。
-
-    步骤：
-      1. 拟合 AR(p)：x_t = Σφ_i·x_{t−i} + ε_t（最小二乘）；
-      2. 保留 φ 与残差 ε 的**边缘分布**，但把 ε 随机打乱后重新合成：
-         x*_t = Σφ_i·x*_{t−i} + ε_{π(t)}。
-
-    这样得到的 surrogate 保留了：一阶/高阶自相关、日周期（因为 AR 项重建了
-    自相关结构）、边缘分布近似的形态；但破坏了 x 与其它变量的**跨变量耦合**。
-    相比块置换，它不会因为「分布不变而耦合仍在」而失效。
-
-    Args:
-        x: 一维序列（应无 NaN，调用方先插值）。
-        order: AR 阶数。
-        rng: 随机数生成器。
-
-    Returns:
-        与 ``x`` 等长的 surrogate 序列。
-    """
-    x = np.asarray(x, dtype=float)
-    n = len(x)
-    if n < order + 20:
-        return x.copy()
-
-    # 构造设计矩阵
-    Y = x[order:]
-    X = np.column_stack([x[order - i - 1: n - i - 1] for i in range(order)])
-    coef, *_ = np.linalg.lstsq(X, Y, rcond=None)
-    resid = Y - X @ coef
-
-    # 打乱残差后递推重建
-    eps = rng.permutation(resid)
-    out = x[:order].copy()
-    for t in range(order, n):
-        lags = np.array([out[t - i - 1] for i in range(order)])
-        out = np.append(out, float(lags @ coef + eps[t - order]))
-    return out[:n]
-
-
-def ksghanadharan_mi(x: np.ndarray, y: np.ndarray, k: int = KSG_K) -> float:
-    """KSG 一型互信息估计（Kraskov–Stögbauer–Grassberger 2004）。
-
-    Args:
-        x: 变量 X（一维，已对齐且无 NaN）。
-        y: 变量 Y（一维）。
-        k: 近邻数。
-
-    Returns:
-        互信息估计值（nats），非负。
-    """
-    from scipy.spatial import cKDTree
-    from scipy.special import digamma as psi
-
-    n = len(x)
-    if n < k + 5:
-        return np.nan
-    xy = np.column_stack([x, y])
-    tree_xy = cKDTree(xy)
-    dist, _ = tree_xy.query(xy, k=k + 1, p=np.inf)
-    eps = np.maximum(dist[:, -1], 1e-12)
-    nx = np.asarray(cKDTree(x.reshape(-1, 1)).query_ball_point(
-        x.reshape(-1, 1), eps, p=np.inf, return_length=True), dtype=float) - 1
-    ny = np.asarray(cKDTree(y.reshape(-1, 1)).query_ball_point(
-        y.reshape(-1, 1), eps, p=np.inf, return_length=True), dtype=float) - 1
-    mi = psi(k) + psi(n) - np.mean(psi(nx) + psi(ny))
-    return float(max(mi, 0.0))
-
-
-# --------------------------------------------------------------------------- #
-# 证据 1：TE（特征 ↔ 事件窗口内最强伙伴）
-# --------------------------------------------------------------------------- #
-
-
-def te_between(x: np.ndarray, y: np.ndarray, lags: tuple[int, ...] = LAGS,
-               k: int = KSG_K, n_perm: int = N_PERM) -> dict[str, float]:
-    """TE(X→Y) 的 KSG 条件互信息估计，扫描滞后取最大值并做置换检验。
-
-    TE(X→Y) = I(Y_t ; X_{t−τ} | Y_{t−τ})。
-
-    Args:
-        x: 驱动序列。
-        y: 响应序列。
-        lags: 滞后集合。
-        k: KSG 近邻数。
-        n_perm: 置换次数。
-
-    Returns:
-        ``te`` / ``lag`` / ``p`` / ``n`` / ``n_eff``。
-    """
-    from tigramite.independence_tests.cmiknn import CMIknn
-
-    x = np.asarray(x, dtype=float)
-    y = np.asarray(y, dtype=float)
-    rng = np.random.default_rng(SEED)
-    # 初值用 -inf：KSG 的有限样本偏差可使 CMI 为负，用 0.0 作初值会
-    # 导致「所有滞后都返回负值」时 best 永不更新、n 恒为 0 的假象。
-    best = {"te": -np.inf, "lag": np.nan, "p": 1.0, "n": 0, "n_eff": np.nan}
-    # 使用 tigramite 官方 KSG kNN 条件互信息估计器（需 numba，已安装）。
-    _est = CMIknn(knn=k, shuffle_neighbors=5, workers=1)
-    _xyz = np.array([0, 1, 2])
-
-    def _cmi(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> float:
-        """I(a;b|c)，调用 tigramite CMIknn（KSG 二型，Frenzel–Pompe 条件形式）。
-
-        Args:
-            a: 响应变量的当前值 Y_t。
-            b: 驱动变量的滞后值 X_{t−τ}。
-            c: 响应变量的滞后值 Y_{t−τ}（条件变量）。
-
-        Returns:
-            条件互信息（nats）。样本不足时返回 NaN。
-        """
-        n_ = len(a)
-        if n_ < k + 5:
-            return np.nan
-        return float(_est.get_dependence_measure(np.array([a, b, c]), _xyz))
-
-    for lag in lags:
-        if len(x) <= lag + 50:
+    x, y, z, groups = (np.asarray(v) for v in (x, y, z, groups))
+    if len(x) != len(y) or len(x) != len(z) or len(x) != len(groups):
+        raise ValueError("KSG 输入长度不一致")
+    rng = np.random.default_rng(seed)
+    local = {}
+    contributions = []
+    for group in np.unique(groups):
+        take = np.flatnonzero(groups == group)
+        if len(take) <= k + 2:
             continue
-        n = len(x) - lag
-        xz, yz, yt = x[:n], y[:n], y[lag:lag + n]
-        m = np.isfinite(xz) & np.isfinite(yz) & np.isfinite(yt)
-        if m.sum() < 100:
+        a = _rank_columns(np.column_stack([x[take], y[take], z[take]]))
+        scale = a.std(axis=0)
+        if np.any(scale < 1e-12):
             continue
-        xz, yz, yt = xz[m], yz[m], yt[m]
-        te = _cmi(yt, xz, yz)
-        if not np.isfinite(te) or te <= best["te"]:
+        a = a + rng.normal(0.0, 1e-7 * scale, a.shape)
+        xyz_tree = cKDTree(a)
+        eps = xyz_tree.query(a, k=k + 1, p=np.inf)[0][:, -1]
+        eps = np.maximum(eps * (1 - 1e-10), 1e-12)
+        nxz = cKDTree(a[:, [0, 2]]).query_ball_point(a[:, [0, 2]], eps, p=np.inf, return_length=True) - 1
+        nyz = cKDTree(a[:, [1, 2]]).query_ball_point(a[:, [1, 2]], eps, p=np.inf, return_length=True) - 1
+        nz = cKDTree(a[:, [2]]).query_ball_point(a[:, [2]], eps, p=np.inf, return_length=True) - 1
+        if np.any(np.minimum.reduce([nxz, nyz, nz]) < 1):
             continue
-        null = np.array([_cmi(yt, rng.permutation(xz), yz) for _ in range(n_perm)])
-        p = float((np.sum(null >= te) + 1) / (n_perm + 1))
-        best = {"te": te, "lag": int(lag), "p": p, "n": int(m.sum()),
-                "n_eff": effective_n(yt)}
-    if not np.isfinite(best["te"]):
-        best["te"] = np.nan
-    return best
+        c = digamma(nxz) + digamma(nyz) - digamma(nz)
+        contributions.append(c)
+        if return_local:
+            local[int(group)] = (take.astype(int), c)  # take: 段内位置索引
+    if not contributions:
+        value = np.nan
+    else:
+        value = float(digamma(k) - np.mean(np.concatenate(contributions)))
+    return (value, local) if return_local else value
 
 
-def evidence_te_panel(feats: pd.DataFrame, cols: list[str], log: list[str]) -> pd.DataFrame:
-    """对每个特征计算它与事件窗口内「最强同步伙伴」的 TE。
-
-    做法：先在事件窗口内用全期预筛选出与其他特征 TE 最强的伙伴，
-    减少计算量；再在全期上计算该配对的 TE。
-
-    Args:
-        feats: 全期特征矩阵。
-        cols: 参与排名的特征。
-        log: 日志收集器。
-
-    Returns:
-        含 ``feature`` / ``te`` / ``te_lag`` / ``te_p`` / ``te_partner`` / ``te_n`` / ``te_n_eff``。
-    """
-    n_before = len(feats)
-    sub_feats = feats.iloc[::TE_SUBSAMPLE]
-    log.append(f"   TE 输入: {len(sub_feats)} 行 × {len(cols)} 列 "
-               f"(全期 {n_before} 行按 {TE_SUBSAMPLE}h 抽样)")
-
-    ev = sub_feats.loc[EVENT_START:EVENT_END]
-    rows = []
-
-    for i, c in enumerate(cols):
-        x = sub_feats[c].to_numpy(dtype=float)
-        best = {"te": 0.0, "partner": "", "lag": np.nan, "p": 1.0, "n": 0, "n_eff": np.nan}
-        # 预筛：在事件窗口内与若干候选伙伴求相关，只对最相关的少数伙伴算 TE
-        sub = ev[[c] + [o for o in cols if o != c]].corr()[c].drop(c).abs()
-        candidates = sub.nlargest(TE_N_CANDIDATES).index.tolist()
-        for partner in candidates:
-            y_full = sub_feats[partner].to_numpy(dtype=float)
-            r = te_between(x, y_full, lags=LAGS[::TE_LAG_STEP], n_perm=TE_N_PERM)
-            if r["te"] > best["te"]:
-                best = {**r, "partner": partner}
-        rows.append({
-            "feature": c, "te": best["te"], "te_lag": best["lag"],
-            "te_p": best["p"], "te_partner": best["partner"],
-            "te_n": best["n"], "te_n_eff": best["n_eff"],
-        })
-        if (i + 1) % 5 == 0 or i == len(cols) - 1:
-            log.append(f"   TE 进度 {i + 1}/{len(cols)}  ({time.time() - _t0:.0f}s)")
-    return pd.DataFrame(rows)
+def restricted_permutation(x: np.ndarray, z: np.ndarray, groups: np.ndarray,
+                           rng: np.random.Generator, neighbors: int = 5) -> np.ndarray:
+    """每个连续时段独立循环移位；同一 b 在各滞后共用零实现。"""
+    out = np.empty(len(x), dtype=float)
+    for group in np.unique(groups):
+        idx = np.flatnonzero(groups == group)
+        shift = int(rng.integers(1, len(idx))) if len(idx) > 1 else 0
+        out[idx] = np.roll(x[idx], shift)
+    return out
 
 
-# --------------------------------------------------------------------------- #
-# 证据 2：PCMCI 特征间因果网络
-# --------------------------------------------------------------------------- #
+def te_for_feature(windows, feature: str, n_perm: int, seed: int) -> TEData:
+    """扫描 1--24 h；逐滞后条件置换及跨滞后 maxT 校正。"""
+    observed, local = [], {}
+    triples = {}
+    for lag in LAGS:
+        x, y, z, group, pos = _group_triples(windows, feature, lag)
+        triples[lag] = (x, y, z, group, pos)
+        value, contributions = ksg_cmi(x, z, y, group, seed=seed + lag, return_local=True)
+        observed.append(value)
+        # ksg_cmi 返回的 idx 是段内三元组数组的局部位置；直接保留即可。
+        local[lag] = {g: (np.asarray(idx, dtype=int), c)
+                      for g, (idx, c) in contributions.items()}
+    observed = np.asarray(observed, dtype=float)
+    null = np.full((n_perm, len(LAGS)), np.nan)
+    # 同一 b 的所有滞后共用一次移位，才构成合法的 maxT 零分布。
+    for b in range(n_perm):
+        shifts = {g: int(np.random.default_rng(seed + 100003 + b).integers(1, 179))
+                  for g in range(len(windows))}
+        for lag_i, lag in enumerate(LAGS):
+            x, y, z, group, _ = triples[lag]
+            if len(x) < 30 or not np.isfinite(observed[lag_i]):
+                continue
+            xp = np.empty(len(x))
+            for g, shift in shifts.items():
+                take = group == g
+                if take.sum() > 1:
+                    xp[take] = np.roll(x[take], shift)
+                else:
+                    xp[take] = x[take]
+            null[b, lag_i] = ksg_cmi(xp, z, y, group, seed=seed + 7919 + b)
+    valid_lags = np.isfinite(observed) & np.isfinite(null).all(axis=0)
+    p_lag = np.full(len(LAGS), np.nan)
+    p_lag[valid_lags] = ((1 + np.sum(null[:, valid_lags] >= observed[None, valid_lags], axis=0))
+                         / (n_perm + 1))
+    valid_max = np.isfinite(null).all(axis=1)
+    null_max = np.full(n_perm, np.nan)
+    null_max[valid_max] = np.max(null[valid_max][:, valid_lags], axis=1) if valid_lags.any() else np.nan
+    finite = np.isfinite(observed)
+    if not finite.any():
+        raise ValueError(f"{feature}: 所有滞后均不可估计")
+    raw_i = int(np.nanargmax(observed))
+    raw_value = float(observed[raw_i])
+    p_max_t = float((1 + np.sum(null_max >= raw_value)) / (np.isfinite(null_max).sum() + 1))
+    significant = np.flatnonzero(finite & (p_lag < 0.05))
+    if len(significant):
+        selected_i = int(significant[np.argmax(observed[significant])])
+        selected_lag, selected_value = LAGS[selected_i], float(observed[selected_i])
+    else:
+        selected_lag, selected_value = None, np.nan
+    n_eff = min(len(triples[lag][0]) for lag in LAGS)
+    return TEData(observed, p_lag, p_max_t, null_max, local, n_eff,
+                  LAGS[raw_i], raw_value, selected_lag, selected_value)
 
 
-def evidence_pcmci_network(feats: pd.DataFrame, cols: list[str],
-                           log: list[str]) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """在特征间运行 PCMCI，统计入度/出度与边列表。
-
-    Args:
-        feats: 全期特征矩阵。
-        cols: 参与排名的特征。
-        log: 日志收集器。
-
-    Returns:
-        ``(degrees, edges)``：每特征的入度/出度，与全部检出边。
-    """
+def pcmci_for_feature(windows, feature: str):
+    """六独立时段上的双变量 PCMCI+；返回最强显著 X->A 边与边表。"""
     from tigramite import data_processing as pp
     from tigramite.independence_tests.parcorr import ParCorr
     from tigramite.pcmci import PCMCI
 
-    X = feats[cols].to_numpy(dtype=float)
-    missing = np.isnan(X).mean(axis=0)
-    df = pd.DataFrame(X).interpolate(limit_direction="both").ffill().bfill()
-    sub = df.iloc[::PCMCI_SUBSAMPLE].to_numpy(dtype=float)
-    log.append(f"   PCMCI 输入: {sub.shape[0]} 行 × {sub.shape[1]} 列 "
-               f"(全期 {PCMCI_SUBSAMPLE}h 抽样)")
-    log.append(f"   PCMCI tau_max = {PCMCI_TAU_MAX}  pc_alpha = {ALPHA}")
-
-    t0 = time.time()
-    data = pp.DataFrame(sub)
-    pc = PCMCI(dataframe=data, cond_ind_test=ParCorr(), verbosity=0)
-    res = pc.run_pcmci(tau_max=PCMCI_TAU_MAX, pc_alpha=ALPHA)
-    G, V = res["graph"], res["val_matrix"]
-    log.append(f"   PCMCI 耗时 {time.time() - t0:.1f}s")
-
-    n = len(cols)
-    outdeg = np.zeros(n, dtype=int)
-    indeg = np.zeros(n, dtype=int)
-    edges = []
-    for i in range(n):
-        for j in range(n):
-            if i == j:
-                continue
-            for tau in range(1, G.shape[2]):
-                if G[i, j, tau] != "":
-                    outdeg[i] += 1
-                    indeg[j] += 1
-                    edges.append({"source": cols[i], "target": cols[j],
-                                  "lag_h": tau * PCMCI_SUBSAMPLE,
-                                  "link": str(G[i, j, tau]),
-                                  "val": float(V[i, j, tau])})
-
-    total = n * (n - 1) * PCMCI_TAU_MAX
-    dens = len(edges) / total if total else np.nan
-    log.append(f"   检出边数 = {len(edges)} / {total}  网络密度 = {dens:.2%}")
-    log.append(f"   平均出度 = {outdeg.mean():.2f}   平均入度 = {indeg.mean():.2f}")
-
-    degrees = pd.DataFrame({
-        "feature": cols, "out_degree": outdeg, "in_degree": indeg,
-        "degree_sum": outdeg + indeg,
-        "pcmci_missing_before_interp": missing,
-    })
-    return degrees, pd.DataFrame(edges)
+    datasets, masks = {}, {}
+    for name, part, _ in windows:
+        a = part[[feature, RESPONSE]].to_numpy(float)
+        mask = ~np.isfinite(a)
+        datasets[name] = np.nan_to_num(a, nan=0.0, posinf=0.0, neginf=0.0)
+        masks[name] = mask
+    data = pp.DataFrame(datasets, mask=masks, analysis_mode="multiple")
+    model = PCMCI(dataframe=data, cond_ind_test=ParCorr(), verbosity=0)
+    result = model.run_pcmciplus(tau_min=1, tau_max=24, pc_alpha=PCMCI_ALPHA,
+                                 max_conds_dim=2, max_combinations=2)
+    graph, values, pvals = result["graph"], result["val_matrix"], result["p_matrix"]
+    significant_lags = [tau for tau in LAGS
+                        if graph[0, 1, tau] == "-->" and pvals[0, 1, tau] < PCMCI_ALPHA]
+    if significant_lags:
+        lag = max(significant_lags, key=lambda tau: abs(values[0, 1, tau]))
+        strength = float(abs(values[0, 1, lag]))
+        p = float(pvals[0, 1, lag])
+    else:
+        lag, strength, p = None, 0.0, np.nan
+    edges = [{"source": feature, "target": RESPONSE, "lag_h": tau,
+              "mci": values[0, 1, tau], "p_value": pvals[0, 1, tau],
+              "method": "PCMCI+/ParCorr"} for tau in significant_lags]
+    return {"pcmci_strength": strength, "pcmci_raw_strength": strength,
+            "pcmci_lag": lag, "pcmci_p": p,
+            "pcmci_significant": bool(significant_lags)}, edges
 
 
-# --------------------------------------------------------------------------- #
-# 证据 3 / 4
-# --------------------------------------------------------------------------- #
+def partial_corr_segments(windows, feature: str, lag: int, indices=None):
+    """逐段 r(A_t,X_lag|A_lag)，按 Fisher z 与自由度加权合并。"""
+    estimates, weights = [], []
+    for seg, (_, part, _) in enumerate(windows):
+        x = part[feature].to_numpy(float)
+        y = part[RESPONSE].to_numpy(float)
+        pos = np.arange(lag, len(part)) if indices is None else indices[seg]
+        pos = pos[(pos >= lag) & (pos < len(part))]
+        a = np.column_stack([y[pos], x[pos - lag], y[pos - lag]])
+        a = a[np.isfinite(a).all(axis=1)]
+        if len(a) < 12 or np.any(a.std(axis=0) < 1e-14):
+            continue
+        corr = np.corrcoef(a, rowvar=False)
+        den = np.sqrt((1 - corr[0, 2] ** 2) * (1 - corr[1, 2] ** 2))
+        r = (corr[0, 1] - corr[0, 2] * corr[1, 2]) / den if den > 1e-14 else np.nan
+        if np.isfinite(r) and abs(r) < 1:
+            estimates.append(np.arctanh(np.clip(r, -0.999999, 0.999999)))
+            weights.append(len(a) - 4)
+    if not estimates or sum(weights) <= 0:
+        return np.nan, 1.0, 0
+    z = np.average(estimates, weights=weights)
+    r = float(np.tanh(z))
+    p = float(2 * stats.norm.sf(abs(z) * np.sqrt(sum(weights))))
+    return r, p, int(sum(weights))
 
 
-def _dcor_1d(x: np.ndarray, y: np.ndarray) -> float:
-    """一维距离相关 dCor，用 O(n log n) 的排序恒等式避免构造 n×n 矩阵。
+def symbolic_te(windows, feature: str, lag: int, indices=None):
+    """回退用三阶符号化 TE，秩分箱；不跨时段创建转移。"""
+    total, weight = 0.0, 0
+    for seg, (_, part, _) in enumerate(windows):
+        x = part[feature].to_numpy(float)
+        y = part[RESPONSE].to_numpy(float)
+        pos = np.arange(lag, len(part)) if indices is None else indices[seg]
+        pos = pos[(pos >= lag) & (pos < len(part))]
+        a = np.column_stack([y[pos], x[pos - lag], y[pos - lag]])
+        a = a[np.isfinite(a).all(axis=1)]
+        if len(a) < 30:
+            continue
+        # 分箱仅依据本段样本，避免不同年份量纲漂移影响符号状态。
+        edges = [np.unique(np.quantile(a[:, j], np.linspace(0, 1, 5))) for j in range(3)]
+        if min(map(len, edges)) < 3:
+            continue
+        states = [np.clip(np.searchsorted(e[1:-1], a[:, j]), 0, 3) for j, e in enumerate(edges)]
+        joint = (states[0] * 16 + states[1] * 4 + states[2]).astype(int)
+        # H(Yt,Xlag,Ylag)+H(Ylag)-H(Xlag,Ylag)-H(Yt,Ylag)。
+        def entropy(codes):
+            count = np.bincount(codes, minlength=int(codes.max()) + 1).astype(float)
+            p = count[count > 0] / len(codes)
+            return -np.sum(p * np.log(p))
+        value = (entropy(joint) + entropy(states[2])
+                 - entropy(states[1] * 4 + states[2]) - entropy(states[0] * 4 + states[2]))
+        total += max(value, 0.0) * len(a)
+        weight += len(a)
+    return total / weight if weight else np.nan
 
-    dCov² 的展开式（Székely & Rizzo）：
 
-        dCov²(X,Y) = E|X−X'||Y−Y'| − 2·E[E|X−X'||Y−Y'| | X] + E|X−X'|·E|Y−Y'|
+def _absolute_moments(x: np.ndarray):
+    """sum_j |x_i-x_j| 及其全局均值，O(n log n)。"""
+    order = np.argsort(x, kind="mergesort")
+    sx = x[order]
+    prefix = np.concatenate([[0.0], np.cumsum(sx)])
+    k = np.arange(len(x))
+    row_sorted = k * sx - prefix[k] + (prefix[-1] - prefix[k + 1]) - (len(x) - 1 - k) * sx
+    row = np.empty(len(x))
+    row[order] = row_sorted
+    return row, row.mean() / len(x)
 
-    对一维变量，`E|X−X'|`、行均值等均可由排序后的前缀和 O(n log n) 求出。
 
-    Args:
-        x: 一维样本。
-        y: 一维样本。
+def _fenwick_sums(tree: np.ndarray, i: int):
+    total = np.zeros(tree.shape[0])
+    while i:
+        total += tree[:, i - 1]
+        i -= i & -i
+    return total
 
-    Returns:
-        距离相关 ∈ [0, 1]。
-    """
+
+def _fenwick_add(tree: np.ndarray, i: int, value: np.ndarray):
+    i += 1
+    while i <= tree.shape[1]:
+        tree[:, i - 1] += value
+        i += i & -i
+
+
+def dcov2(x: np.ndarray, y: np.ndarray) -> float:
+    """一维偏差距离协方差，Fenwick 树精确计算交叉项，O(n log n)。"""
+    x, y = np.asarray(x, float), np.asarray(y, float)
     n = len(x)
     if n < 4:
         return np.nan
-
-    def _abs_diff_row_mean(s: np.ndarray) -> np.ndarray:
-        """返回每个 i 的 (1/n)·Σ_j |s_i − s_j|。"""
-        order = np.argsort(s, kind="mergesort")
-        ss = s[order]
-        prefix = np.concatenate([[0.0], np.cumsum(ss)])
-        k = np.arange(n)
-        # Σ_j |ss_k − ss_j| = k·ss_k − prefix[k] + (prefix[n]−prefix[k+1]) − (n−1−k)·ss_k
-        row_sorted = (k * ss - prefix[k]
-                      + (prefix[n] - prefix[k + 1])
-                      - (n - 1 - k) * ss)
-        row = np.empty(n)
-        row[order] = row_sorted
-        return row / n
-
-    a = _abs_diff_row_mean(x)
-    b = _abs_diff_row_mean(y)
-    ga, gb = float(a.mean()), float(b.mean())
-    # dCov² = E_ij[a_i b_j] 的中心化形式：mean(A·B)，其中 A_ij = |x_i−x_j| − a_i − a_j + ga
-    # 由于一维 |x_i−x_j| 的矩阵均值可解析：mean_ij |x_i−x_j| = 2·Σ_k (2k−n+1)·ss_k / n²
-    # 直接用等价式：dCov² = E|X−X'||Y−Y'| − 2·E[a(X)·b(Y')] + ga·gb
-    # 其中第一项的 E 仍需 O(n²)，故改用抽样公式：由中心化矩阵 A、B 的迹无法简化，
-    # 这里对 n 已抽样到 ≤ DCOR_MAX_N，直接构造矩阵可接受（默认 4000² = 128 MB）。
-    A = np.abs(x[:, None] - x[None, :])
-    B = np.abs(y[:, None] - y[None, :])
-    A -= a[:, None] + a[None, :] - ga
-    B -= b[:, None] + b[None, :] - gb
-    dcov2 = float((A * B).mean())
-    vx = float((A * A).mean())
-    vy = float((B * B).mean())
-    denom = np.sqrt(max(vx * vy, 1e-24))
-    return float(np.sqrt(max(dcov2, 0.0) / denom))
+    ax, mean_ax = _absolute_moments(x)
+    ay, mean_ay = _absolute_moments(y)
+    order = np.argsort(x, kind="mergesort")
+    sx, sy = x[order], y[order]
+    levels = np.unique(y)
+    tree = np.zeros((4, len(levels)))
+    prefix_x = np.concatenate([[0.0], np.cumsum(sx)])
+    prefix_y = prefix_xy = 0.0
+    cross_sum = 0.0
+    for i in range(n):
+        rank = int(np.searchsorted(levels, sy[i], side="right"))
+        count, sum_x, sum_y, sum_xy = _fenwick_sums(tree, rank)
+        dx_le = sx[i] * count - sum_x
+        dxy_le = sx[i] * sum_y - sum_xy
+        dx_all = i * sx[i] - prefix_x[i]
+        dxy_all = sx[i] * prefix_y - prefix_xy
+        cross_sum += (sy[i] * dx_le - dxy_le
+                      + (dxy_all - dxy_le) - sy[i] * (dx_all - dx_le))
+        _fenwick_add(tree, rank - 1, np.array([1.0, sx[i], sy[i], sx[i] * sy[i]]))
+        prefix_y += sy[i]
+        prefix_xy += sx[i] * sy[i]
+    value = 2 * cross_sum / n**2 - 2 * np.dot(ax, ay) / n**3 + mean_ax * mean_ay
+    return float(value)
 
 
-def evidence_dcor_tail(x: np.ndarray, y: np.ndarray) -> dict[str, float]:
-    """距离相关 dCor 与上尾依赖系数 λ_U（经验 copula，u > 0.9）。
+def dcor(x: np.ndarray, y: np.ndarray) -> float:
+    """偏差距离相关；常数变量或无效分母返回 NaN，不伪造零相关。"""
+    if len(x) < 4:
+        return np.nan
+    xy, xx, yy = dcov2(x, y), dcov2(x, x), dcov2(y, y)
+    den = np.sqrt(max(xx, 0.0) * max(yy, 0.0))
+    return float(np.sqrt(max(xy, 0.0) / den)) if den > 1e-24 else np.nan
 
-    Args:
-        x: 变量 X。
-        y: 变量 Y。
 
-    Returns:
-        ``dcor`` / ``lambda_u`` / ``n`` / ``n_eff``。
-    """
-    m = np.isfinite(x) & np.isfinite(y)
-    x, y = x[m], y[m]
-    n_full = len(x)
-    if n_full < 30:
-        return {"dcor": np.nan, "lambda_u": np.nan, "n": n_full, "n_eff": np.nan}
+def tail_dependence(x: np.ndarray, anchor: np.ndarray, q: float = TAIL_Q):
+    """lambda_U=P(V>q|U>q)，秩采用平均秩处理二值锚点并列。"""
+    n = len(x)
+    if n < 20:
+        return np.nan, np.nan, 0
+    u = stats.rankdata(x, method="average") / (n + 1)
+    v = stats.rankdata(anchor, method="average") / (n + 1)
+    ux, vx = u > q, v > q
+    denom = int(ux.sum())
+    lam = float(np.sum(ux & vx) / denom) if denom else np.nan
+    event_rate = float(np.mean(anchor[ux])) if denom else np.nan
+    return lam, event_rate, denom
 
-    # dCor 的 O(n²) 距离矩阵在全期（数万样本）会撑爆内存（36051² ≈ 9.7 GB），
-    # 因此对 dCor 做无放回抽样；尾依赖 λ_U 用全样本（只需排序，O(n log n)）。
-    rng = np.random.default_rng(SEED)
-    if n_full > DCOR_MAX_N:
-        idx = rng.choice(n_full, size=DCOR_MAX_N, replace=False)
-        xs, ys = x[idx], y[idx]
+
+def distribution_shift(event: np.ndarray, background: np.ndarray):
+    """50 箱 KL(event||background) 与标量马氏距离；Jeffreys 0.5 平滑。"""
+    event = event[np.isfinite(event)]
+    background = background[np.isfinite(background)]
+    out = {"kl": np.nan, "mahalanobis": np.nan, "n_event": len(event), "n_background": len(background)}
+    if len(event) < 20 or len(background) < 20:
+        return out
+    lo, hi = min(event.min(), background.min()), max(event.max(), background.max())
+    sd = background.std(ddof=1)
+    if hi <= lo or sd <= 1e-14:
+        return out
+    bins = np.linspace(lo, hi, KL_BINS + 1)
+    p = np.histogram(event, bins)[0].astype(float) + 0.5
+    q = np.histogram(background, bins)[0].astype(float) + 0.5
+    p, q = p / p.sum(), q / q.sum()
+    out["kl"] = float(np.sum(p * np.log(p / q)))
+    out["mahalanobis"] = float(abs(event.mean() - background.mean()) / sd)
+    return out
+
+
+def block_indices(n: int, block: int, rng: np.random.Generator) -> np.ndarray:
+    """从同一时段内有放回抽取固定长度时间块，不跨年拼接。"""
+    starts = np.arange(0, n, block)
+    chosen = rng.choice(starts, size=int(np.ceil(n / block)), replace=True)
+    return np.concatenate([np.arange(s, min(s + block, n)) for s in chosen])[:n]
+
+
+def eligible_features(frame: pd.DataFrame):
+    """保留所有特征行；只将响应自身与完全无信息列排除出 Borda。"""
+    reasons = {}
+    for col in frame.columns:
+        if col == RESPONSE:
+            reasons[col] = "连续响应自身：不作为自身原因参与 Borda"
+        elif frame[col].notna().sum() < 30 or frame[col].nunique(dropna=True) < 2:
+            reasons[col] = "有效样本不足或为常数"
+    return [c for c in frame.columns if c not in reasons], reasons
+
+
+def compute_evidence(frame: pd.DataFrame, features: list[str], n_perm: int,
+                     seed: int, with_te: bool = True):
+    """计算全部证据；负对照复用时执行同一套函数。"""
+    windows = windows_of(frame)
+    rows, lag_rows, edges, caches = [], [], [], {}
+    pcmci_available = True
+    pcmci_import_error = ""
+    try:
+        import tigramite  # noqa: F401
+    except ImportError as exc:
+        pcmci_available = False
+        pcmci_import_error = repr(exc)
+    for i, feature in enumerate(features, 1):
+        row = {"feature": feature}
+        if with_te:
+            try:
+                te = te_for_feature(windows, feature, n_perm, seed + i * 1000003)
+                caches[feature] = te
+                row.update(te_raw=te.raw_value, te_raw_lag=te.raw_lag,
+                           te=te.selected_value, te_lag=te.selected_lag,
+                           te_p=te.p_lag[te.raw_lag - 1], te_maxT_p=te.p_max_t,
+                           te_n=te.n_eff,
+                           te_score=max(te.raw_value, 0.0) if te.p_max_t < 0.05 else 0.0)
+                for j, lag in enumerate(LAGS):
+                    lag_rows.append({"feature": feature, "lag_h": lag, "te": te.observed[j],
+                                     "p_lag": te.p_lag[j], "maxT_p_at_raw_best": te.p_max_t})
+            except (ValueError, FloatingPointError) as exc:
+                row.update(te_raw=np.nan, te_raw_lag=np.nan, te=np.nan, te_lag=np.nan,
+                           te_p=np.nan, te_maxT_p=np.nan, te_n=0, te_score=np.nan,
+                           te_error=str(exc))
+        if feature != RESPONSE and frame[feature].notna().sum() >= 30:
+            if pcmci_available:
+                try:
+                    p, e = pcmci_for_feature(windows, feature)
+                    edges.extend(e)
+                    row.update(p)
+                    row["pcmci_method"] = "PCMCI+/ParCorr"
+                except Exception as exc:  # 失败立即启用显式回退，不用缺失掩盖。
+                    fallback_error = repr(exc)
+                    row.update(pcmci_strength=np.nan, pcmci_raw_strength=np.nan,
+                               pcmci_lag=np.nan, pcmci_p=np.nan,
+                               pcmci_significant=False, pcmci_method="symbolic_TE+partial_corr",
+                               pcmci_error=fallback_error)
+                    candidates = []
+                    for lag in LAGS:
+                        r, p, n = partial_corr_segments(windows, feature, lag)
+                        sym = symbolic_te(windows, feature, lag)
+                        candidates.append((lag, r, p, n, sym))
+                    valid = [c for c in candidates if np.isfinite(c[1]) and c[2] < PCMCI_ALPHA]
+                    if valid:
+                        best = max(valid, key=lambda c: abs(c[1]))
+                        row.update(pcmci_strength=abs(best[1]), pcmci_raw_strength=abs(best[1]),
+                                   pcmci_lag=best[0], pcmci_p=best[2], pcmci_significant=True,
+                                   symbolic_te=best[4])
+                        edges.append({"source": feature, "target": RESPONSE, "lag_h": best[0],
+                                      "mci": best[1], "p_value": best[2], "method": "partial_corr_fallback"})
+            else:
+                candidates = []
+                for lag in LAGS:
+                    r, p, n = partial_corr_segments(windows, feature, lag)
+                    sym = symbolic_te(windows, feature, lag)
+                    candidates.append((lag, r, p, n, sym))
+                valid = [c for c in candidates if np.isfinite(c[1])]
+                if valid:
+                    best = max(valid, key=lambda c: abs(c[1]))
+                    row.update(pcmci_strength=abs(best[1]) if best[2] < 0.05 else 0.0,
+                               pcmci_raw_strength=abs(best[1]), pcmci_lag=best[0], pcmci_p=best[2],
+                               pcmci_significant=best[2] < 0.05, pcmci_method="symbolic_TE+partial_corr",
+                               symbolic_te=best[4])
+                    edges.append({"source": feature, "target": RESPONSE, "lag_h": best[0],
+                                  "mci": best[1], "p_value": best[2], "method": "partial_corr_fallback"})
+        else:
+            row["pcmci_method"] = "not_applicable_response" if feature == RESPONSE else "insufficient_data"
+        stacked = pd.concat([part[[feature]] for _, part, _ in windows])
+        labels = np.concatenate([np.full(len(part), is_event, dtype=float) for _, part, is_event in windows])
+        x = stacked[feature].to_numpy(float)
+        keep = np.isfinite(x)
+        row["dcor"] = dcor(x[keep], labels[keep]) if keep.sum() >= 20 else np.nan
+        lam, event_rate, tail_n = tail_dependence(x[keep], labels[keep])
+        row.update(lambda_u=lam, tail_event_rate=event_rate, tail_n=tail_n, dependence_n=int(keep.sum()))
+        event = windows[-1][1][feature].to_numpy(float)
+        background = np.concatenate([part[feature].to_numpy(float) for _, part, is_event in windows if not is_event])
+        row.update(distribution_shift(event, background))
+        rows.append(row)
+        print(f"  证据 {i:2d}/{len(features)} {feature}", flush=True)
+    return pd.DataFrame(rows).set_index("feature"), pd.DataFrame(lag_rows), pd.DataFrame(edges), caches
+
+
+def add_ranks(result: pd.DataFrame) -> pd.DataFrame:
+    """四组等权 Borda；原始证据全部保留，秩只用于排序。"""
+    out = result.copy()
+    out["dependence_score"] = out[["dcor", "lambda_u"]].rank(pct=True).mean(axis=1)
+    out["shift_score"] = out[["kl", "mahalanobis"]].rank(pct=True).mean(axis=1)
+    metrics = {"te": "te_score", "pcmci": "pcmci_strength", "dependence": "dependence_score", "shift": "shift_score"}
+    n = len(out)
+    for name, col in metrics.items():
+        out[f"rank_{name}"] = out[col].rank(ascending=False, method="average", na_option="bottom")
+    out["borda_rank_sum"] = out[[f"rank_{x}" for x in metrics]].sum(axis=1)
+    out["borda_score"] = (n + 1) * 4 - out["borda_rank_sum"]
+    out["borda_rank"] = out["borda_rank_sum"].rank(method="min").astype(int)
+    return out.sort_values(["borda_rank_sum", "te_raw"], ascending=[True, False])
+
+
+def bootstrap_stability(frame: pd.DataFrame, features: list[str], caches: dict,
+                        main: pd.DataFrame, n_boot: int, seed: int):
+    """72 h 块自助法；精确重算依赖/偏移，近似重算 TE/PCMCI（见模块说明）。"""
+    windows = windows_of(frame)
+    rng = np.random.default_rng(seed)
+    counts = pd.Series(0, index=features, dtype=float)
+    valid_boot = 0
+    for b in range(n_boot):
+        indices = [block_indices(len(part), BOOT_BLOCK, rng) for _, part, _ in windows]
+        rows = []
+        for feature in features:
+            row = {"feature": feature}
+            if feature in caches:
+                te = caches[feature]
+                lag_scores = []
+                for lag in LAGS:
+                    values, weights = [], []
+                    for seg, local in te.local[lag].items():
+                        idx, contribution = local
+                        # idx 是段内三元组局部位置；bootstrap 重采样后用 indices[seg] 定位。
+                        # 若该位置未被抽到则跳过；权重按抽中次数。
+                        boot_idx = indices[seg]
+                        # 把段内 idx 映射到 bootstrap 抽样后的贡献：取 idx 与 boot_idx 的交集计数。
+                        count = np.zeros(len(contribution), dtype=int)
+                        unique, cnt = np.unique(boot_idx, return_counts=True)
+                        in_range = unique < len(contribution)
+                        count[unique[in_range]] = cnt[in_range]
+                        mask = count > 0
+                        if mask.any():
+                            values.append(np.average(contribution[mask], weights=count[mask]))
+                            weights.append(int(count[mask].sum()))
+                    lag_scores.append(np.average(values, weights=weights) if values else np.nan)
+                lag_scores = np.asarray(lag_scores)
+                best = np.nanmax(lag_scores) if np.isfinite(lag_scores).any() else np.nan
+                threshold = np.nanquantile(te.null_max, 0.95) if np.isfinite(te.null_max).any() else np.inf
+                row["te_score"] = max(best, 0.0) if best > threshold else 0.0
+                row["te_raw"] = best
+            else:
+                row["te_raw"], row["te_score"] = np.nan, np.nan
+            if feature != RESPONSE:
+                main_lag = main.loc[feature, "pcmci_lag"]
+                lag = int(main_lag) if main_lag is not None and not (isinstance(main_lag, float) and np.isnan(main_lag)) else 1
+                if "partial_corr" in str(main.loc[feature, "pcmci_method"]):
+                    candidates = [(abs(r), p) for r, p, _ in [partial_corr_segments(windows, feature, l, indices) for l in LAGS]]
+                    score, p = max(candidates, key=lambda v: v[0] if np.isfinite(v[0]) else -np.inf)
+                    row["pcmci_strength"] = score if p < 0.05 else 0.0
+                else:
+                    r, p, _ = partial_corr_segments(windows, feature, lag, indices)
+                    row["pcmci_strength"] = abs(r) if np.isfinite(r) and p < 0.05 else 0.0
+            else:
+                row["pcmci_strength"] = np.nan
+            x_parts, labels = [], []
+            for seg, (_, part, is_event) in enumerate(windows):
+                x_parts.append(part[feature].to_numpy(float)[indices[seg]])
+                labels.append(np.full(len(indices[seg]), is_event, dtype=float))
+            x, label = np.concatenate(x_parts), np.concatenate(labels)
+            keep = np.isfinite(x)
+            row["dcor"] = dcor(x[keep], label[keep]) if keep.sum() >= 20 else np.nan
+            row["lambda_u"] = tail_dependence(x[keep], label[keep])[0]
+            event = windows[-1][1][feature].to_numpy(float)[indices[-1]]
+            background = np.concatenate([part[feature].to_numpy(float)[indices[seg]]
+                                         for seg, (_, part, is_event) in enumerate(windows) if not is_event])
+            row.update(distribution_shift(event, background))
+            rows.append(row)
+        ranked = add_ranks(pd.DataFrame(rows).set_index("feature"))
+        counts.loc[ranked.head(5).index] += 1
+        valid_boot += 1
+        if (b + 1) % 25 == 0 or b == 0:
+            print(f"  bootstrap {b + 1}/{n_boot}", flush=True)
+    stability = (counts / valid_boot).rename("top5_frequency").to_frame()
+    stability["n_bootstrap"] = valid_boot
+    stability["block_hours"] = BOOT_BLOCK
+    stability["method"] = "exact dCor/tail/KL/Mahalanobis; frozen-neighborhood TE; lag-partial-corr PCMCI proxy"
+    return stability.sort_values("top5_frequency", ascending=False)
+
+
+def negative_control(frame: pd.DataFrame, features: list[str], main: pd.DataFrame,
+                     n_perm: int, seed: int):
+    """全时间轴 24 h 循环移位特征值，响应与窗口标签不动，重算全部证据。"""
+    n = len(frame)
+    shifted = frame.iloc[np.roll(np.arange(n), NEGATIVE_SHIFT)].copy()
+    shifted.index = frame.index
+    perm, _, _, _ = compute_evidence(shifted, features, n_perm, seed + 88000001, with_te=True)
+    rows = []
+    comparisons = {"te": ("te_raw", "TE raw max"), "pcmci": ("pcmci_raw_strength", "PCMCI |MCI|"),
+                   "dcor": ("dcor", "dCor"), "lambda_u": ("lambda_u", "lambda_U"),
+                   "kl": ("kl", "KL"), "mahalanobis": ("mahalanobis", "Mahalanobis")}
+    for feature in features:
+        row = {"feature": feature}
+        for name, (col, _) in comparisons.items():
+            real, null = main.loc[feature, col], perm.loc[feature, col]
+            row[f"{name}_real"], row[f"{name}_shifted"] = real, null
+            row[f"{name}_drop_pct"] = 100 * (real - null) / abs(real) if np.isfinite(real) and abs(real) > 1e-14 else np.nan
+        rows.append(row)
+    summary = []
+    for name, (_, label) in comparisons.items():
+        pair = pd.DataFrame({"real": main[comparisons[name][0]], "shifted": perm[comparisons[name][0]]}).dropna()
+        # 排除真实值/置换值同时为零的不可辨识比较，不把 0/0 当 100% 下降。
+        pair = pair[(pair.real.abs() > 1e-14) | (pair.shifted.abs() > 1e-14)]
+        delta = pair.real - pair.shifted
+        if len(pair) >= 6 and np.any(delta.abs() > 1e-14):
+            test = stats.wilcoxon(pair.real, pair.shifted, alternative="greater", zero_method="wilcox")
+            p = float(test.pvalue)
+        else:
+            p = np.nan
+        drop = 100 * delta / pair.real.abs().replace(0, np.nan)
+        summary.append({"metric": name, "label": label, "n": len(pair),
+                        "real_median": pair.real.median(), "shifted_median": pair.shifted.median(),
+                        "median_drop_pct": drop.median(), "wilcoxon_p_greater": p,
+                        "significant_decrease": bool(np.isfinite(p) and p < 0.05 and delta.median() > 0)})
+    return pd.DataFrame(rows).set_index("feature"), pd.DataFrame(summary), perm
+
+
+def configure_plotting():
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    plt.rcParams.update({"font.sans-serif": ["SimHei", "Microsoft YaHei", "DejaVu Sans"],
+                         "axes.unicode_minus": False, "figure.facecolor": "#fcfcfb",
+                         "axes.facecolor": "#fcfcfb", "text.color": "#0b0b0b",
+                         "axes.labelcolor": "#52514e", "xtick.color": "#52514e", "ytick.color": "#52514e"})
+    return plt
+
+
+def plot_network(edges: pd.DataFrame, path: Path, method: str):
+    """只画显著 X->连续响应边；无边时明确写无，不画装饰性网络。"""
+    import networkx as nx
+    plt = configure_plotting()
+    fig, ax = plt.subplots(figsize=(11, 8))
+    blue, orange = "#2a78d6", "#eb6834"
+    if edges.empty:
+        ax.text(0.5, 0.55, "α=0.05 下未检出 X → 响应的滞后边", ha="center", va="center", fontsize=14)
+        ax.text(0.5, 0.45, "空图是检验结果，不以相关性补边", ha="center", color="#52514e")
+        ax.axis("off")
     else:
-        xs, ys = x, y
-    n = len(xs)
-
-    dcor = _dcor_1d(xs, ys)
-    dcor = float(np.clip(dcor, 0.0, 1.0))
-
-    # 上尾依赖用全样本
-    u = stats.rankdata(x) / (n_full + 1)
-    v = stats.rankdata(y) / (n_full + 1)
-    thr = 0.9
-    lam_u = float(((u > thr) & (v > thr)).sum() / max((u > thr).sum(), 1))
-
-    return {"dcor": dcor, "lambda_u": lam_u, "n": n_full, "n_sampled": n,
-            "n_eff": effective_n(x)}
-
-
-def evidence_shift(feat: np.ndarray, bg: np.ndarray) -> dict[str, float]:
-    """事件窗口相对气候背景的分布偏移：KL 散度 + 马氏距离。
-
-    Args:
-        feat: 事件窗口特征值。
-        bg: 气候背景特征值。
-
-    Returns:
-        ``kl`` / ``mahal`` / ``n_event`` / ``n_bg`` / ``n_eff``。
-    """
-    f = np.asarray(feat, dtype=float)
-    b = np.asarray(bg, dtype=float)
-    f, b = f[np.isfinite(f)], b[np.isfinite(b)]
-    base = {"n_event": len(f), "n_bg": len(b), "n_eff": effective_n(f)}
-    if len(f) < 20 or len(b) < 20:
-        return {**base, "kl": np.nan, "mahal": np.nan}
-
-    lo, hi = float(min(f.min(), b.min())), float(max(f.max(), b.max()))
-    if hi <= lo:
-        return {**base, "kl": 0.0, "mahal": 0.0}
-    bins = np.linspace(lo, hi, 51)
-    pf, _ = np.histogram(f, bins=bins)
-    pb, _ = np.histogram(b, bins=bins)
-    pf = (pf + 1e-6) / (pf.sum() + 1e-6 * len(pf))
-    pb = (pb + 1e-6) / (pb.sum() + 1e-6 * len(pb))
-    kl = float(np.sum(pf * np.log(pf / pb)))
-
-    sd = float(b.std(ddof=1))
-    mahal = float(abs(f.mean() - b.mean()) / sd) if sd > 1e-12 else np.nan
-    return {**base, "kl": kl, "mahal": mahal}
+        show = edges.reindex(edges.mci.abs().sort_values(ascending=False).index).head(20)
+        graph = nx.DiGraph()
+        graph.add_node(RESPONSE)
+        for _, edge in show.iterrows():
+            graph.add_edge(edge.source, edge.target, lag=edge.lag_h, weight=abs(edge.mci))
+        pos = nx.spring_layout(graph, seed=SEED, k=1.4)
+        nx.draw_networkx_nodes(graph, pos, nodelist=[n for n in graph if n != RESPONSE],
+                               node_color=blue, node_size=900, edgecolors="#fcfcfb", linewidths=2, ax=ax)
+        nx.draw_networkx_nodes(graph, pos, nodelist=[RESPONSE], node_color=orange,
+                               node_size=1800, edgecolors="#fcfcfb", linewidths=2, ax=ax)
+        widths = [1 + 5 * abs(graph[u][v]["weight"]) / max(show.mci.abs().max(), 1e-12) for u, v in graph.edges]
+        nx.draw_networkx_edges(graph, pos, width=widths, edge_color="#52514e",
+                               arrows=True, arrowsize=18, connectionstyle="arc3,rad=0.06", ax=ax)
+        nx.draw_networkx_labels(graph, pos, font_size=8, ax=ax)
+        nx.draw_networkx_edge_labels(graph, pos, {(u, v): f"{d['lag']}h" for u, v, d in graph.edges(data=True)},
+                                     font_size=7, ax=ax)
+        ax.set_axis_off()
+    ax.set_title(f"X → 逐时浅层土壤含水变化（{method}，α=0.05）\n最多显示 20 条最强边；探索性双变量结果", fontsize=13)
+    fig.tight_layout()
+    fig.savefig(path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
 
 
-# --------------------------------------------------------------------------- #
-# 主流程
-# --------------------------------------------------------------------------- #
+def plot_stability(stability: pd.DataFrame, top5: list[str], path: Path, n_boot: int):
+    plt = configure_plotting()
+    show = stability.head(15).sort_values("top5_frequency")
+    fig, ax = plt.subplots(figsize=(10, 7))
+    colors = ["#2a78d6" if f in top5 else "#c3c2b7" for f in show.index]
+    bars = ax.barh(show.index, show.top5_frequency, color=colors, height=0.66)
+    for bar, value in zip(bars, show.top5_frequency):
+        ax.text(value + 0.012, bar.get_y() + bar.get_height() / 2, f"{value:.3f}", va="center", fontsize=8)
+    ax.set(xlim=(0, 1.12), xlabel=f"进入 Borda Top-5 的频率（{n_boot} 次，72 h 块）",
+           title="Q1 共识排序稳定性\n蓝色为全样本 Top-5；TE/PCMCI 为重采样近似")
+    ax.grid(axis="x", color="#e1e0d9", lw=0.7)
+    ax.set_axisbelow(True)
+    ax.spines[["top", "right", "left"]].set_visible(False)
+    fig.tight_layout()
+    fig.savefig(path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_negative(detail: pd.DataFrame, summary: pd.DataFrame, path: Path):
+    plt = configure_plotting()
+    metrics = [("te", "TE raw max"), ("pcmci", "PCMCI |MCI|"),
+               ("dcor", "dCor"), ("kl", "KL")]
+    fig, axes = plt.subplots(2, 2, figsize=(12, 9))
+    for ax, (metric, label) in zip(axes.ravel(), metrics):
+        real, null = detail[f"{metric}_real"], detail[f"{metric}_shifted"]
+        keep = real.notna() & null.notna()
+        for a, b in zip(real[keep], null[keep]):
+            ax.plot([0, 1], [a, b], color="#c3c2b7", lw=0.6, alpha=0.65, zorder=1)
+        ax.scatter(np.zeros(keep.sum()), real[keep], s=20, color="#2a78d6", label="真实", zorder=2)
+        ax.scatter(np.ones(keep.sum()), null[keep], s=20, color="#eb6834", marker="s", label="24 h 移位", zorder=2)
+        info = summary.loc[summary.metric == metric].iloc[0]
+        p = info.wilcoxon_p_greater
+        ax.set_title(f"{label}：中位下降 {info.median_drop_pct:.1f}%，p={p:.3g}" if np.isfinite(p)
+                     else f"{label}：有效配对不足")
+        ax.set_xticks([0, 1], ["真实", "24 h 移位"])
+        ax.grid(axis="y", color="#e1e0d9", lw=0.7)
+        ax.set_axisbelow(True)
+        ax.spines[["top", "right"]].set_visible(False)
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="upper right", frameon=False)
+    fig.suptitle("负对照：特征值相对共同时间轴循环移动 24 h\n逐特征灰线配对；显著性为单侧 Wilcoxon", fontsize=14)
+    fig.tight_layout(rect=(0, 0, 1, 0.93))
+    fig.savefig(path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
+def self_check(frame: pd.DataFrame):
+    """不依赖正式输出的统计与窗口回归测试。"""
+    windows = windows_of(frame)
+    assert len(windows) == 6 and all(len(p) == 179 for _, p, _ in windows)
+    assert sum(not e for _, _, e in windows) == 5
+    rng = np.random.default_rng(SEED)
+    for n in (30, 80):
+        x, y = rng.normal(size=n), rng.normal(size=n)
+        a = np.abs(x[:, None] - x[None, :])
+        b = np.abs(y[:, None] - y[None, :])
+        ac = a - a.mean(0)[None, :] - a.mean(1)[:, None] + a.mean()
+        bc = b - b.mean(0)[None, :] - b.mean(1)[:, None] + b.mean()
+        expected = np.mean(ac * bc)
+        assert np.isclose(dcov2(x, y), expected, atol=1e-10), (n, dcov2(x, y), expected)
+        expected_r = np.sqrt(max(expected, 0) / np.sqrt(np.mean(ac * ac) * np.mean(bc * bc)))
+        assert np.isclose(dcor(x, y), expected_r, atol=1e-10)
+    # KSG 独立均匀样本应接近零；完全函数关系应大于零。
+    x, y, z = rng.normal(size=(3, 240))
+    independent = ksg_cmi(x, y, z, np.zeros(len(x), int), seed=SEED)
+    dependent = ksg_cmi(x, x + 0.01 * y, z, np.zeros(len(x), int), seed=SEED)
+    assert dependent > independent, (dependent, independent)
+    block = block_indices(179, 72, rng)
+    assert len(block) == 179 and np.all((block >= 0) & (block < 179))
+    shifted = frame.iloc[np.roll(np.arange(len(frame)), 24)]
+    assert len(shifted) == len(frame)
+    print("SELF_CHECK: PASS（窗口、dCor 矩阵对照、KSG 基本行为、72h 块、24h 移位）")
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--check-only", action="store_true", help="只运行统计自检，不写文件")
+    parser.add_argument("--features", help="逗号分隔特征子集；必须同时改 --output-root")
+    parser.add_argument("--te-perms", type=int, default=TE_PERMUTATIONS)
+    parser.add_argument("--bootstrap", type=int, default=BOOTSTRAP_N)
+    parser.add_argument("--output-root", type=Path, default=DEFAULT_OUT)
+    return parser.parse_args()
 
 
 def main() -> int:
-    """执行四证据计算、共识排序、负对照与稳定性分析。
-
-    Returns:
-        进程退出码：0 正常；1 负对照未达标。
-    """
-    t_all = time.time()
-    log: list[str] = []
-    add = log.append
-
-    import importlib.metadata as _md
-
-    add("=" * 78)
-    add("P2-2 Q1 因果共识排序（方案 E：特征间因果网络）")
-    add("=" * 78)
-    add(f"运行时间戳 : {datetime.now().astimezone().isoformat()}")
-    add(f"Python     : {sys.version.split()[0]}   numpy {np.__version__} / pandas {pd.__version__}")
-    add(f"tigramite  : {_md.version('tigramite')}")
-    add(f"SEED       : {SEED}")
-    add("")
-
-    add("-" * 78)
-    add("[0] 设计演进（如实记录）")
-    add("-" * 78)
-    add("原设计用「事件窗口 0/1 指示」作因果锚点，实测两种锚点均失效：")
-    add("  (a) 0/1 指示：KSG kNN 条件互信息为连续变量估计器，二值条件变量使其退化；")
-    add("  (b) 事件倒计时（方案 D）：锚点满足 a[t]=a[t-1]+1，条件在 a[t-τ] 上时")
-    add("      a[t] 被完全确定，故 I(a_t; X_{t-τ} | a_{t-τ}) ≡ 0，TE 数学上恒为 0。")
-    add("经用户批准改用 方案 E（特征间因果网络）+ 全期训练 + 事件窗口偏移。")
-    add("")
-
-    feats = pd.read_csv(CLEAN_DIR / "features_hourly.csv", encoding="utf-8-sig",
-                        index_col=0, parse_dates=True)
-    all_cols = list(feats.columns)
-    excluded = [c for c in all_cols if c in EXCLUDED]
-    cols = [c for c in all_cols if c not in EXCLUDED]
-
-    add("-" * 78)
-    add("[1] 特征与样本")
-    add("-" * 78)
-    add(f"全期特征数 : {len(all_cols)}   参与排名 : {len(cols)}")
-    for c in excluded:
-        add(f"   排除 {c}: {EXCLUDED[c]}")
-    add(f"全期行数   : {len(feats)}   {feats.index.min()} -> {feats.index.max()}")
-    ev = feats.loc[EVENT_START:EVENT_END]
-    add(f"事件窗口   : {EVENT_START} -> {EVENT_END}  n = {len(ev)}")
-    add("")
-
-    # ---------- 证据 1：TE ----------
-    add("-" * 78)
-    add("[2] 证据 1：传递熵 TE（全期，特征 ↔ 最强同步伙伴）")
-    add("-" * 78)
-    global _t0
-    _t0 = time.time()
-    te_df = evidence_te_panel(feats, cols, log)
-    add(f"   TE 计算耗时 {time.time() - _t0:.1f}s")
-    add("")
-
-    # ---------- 证据 2：PCMCI ----------
-    add("-" * 78)
-    add("[3] 证据 2：PCMCI 特征间因果网络（全期）")
-    add("-" * 78)
-    deg, edges = evidence_pcmci_network(feats, cols, log)
-    add("")
-
-    # ---------- 证据 3：dCor / 尾依赖 ----------
-    add("-" * 78)
-    add("[4] 证据 3：dCor + 上尾依赖 λ_U（特征 vs 事件窗口指示）")
-    add("-" * 78)
-    is_event = pd.Series(((feats.index >= EVENT_START) & (feats.index <= EVENT_END)).astype(float),
-                         index=feats.index)
-    dc_rows = []
-    for c in cols:
-        r = evidence_dcor_tail(feats[c].to_numpy(dtype=float), is_event.to_numpy(dtype=float))
-        dc_rows.append({"feature": c, "dcor": r["dcor"], "lambda_u": r["lambda_u"],
-                        "dt_n": r["n"], "dt_n_eff": r["n_eff"]})
-    dc_df = pd.DataFrame(dc_rows)
-    add(f"   完成 {len(cols)} 个特征")
-    add("")
-
-    # ---------- 证据 4：分布偏移 ----------
-    add("-" * 78)
-    add("[5] 证据 4：事件窗口 vs 气候背景的分布偏移")
-    add("-" * 78)
-    bg_parts = [feats.loc[f"{y}-{BG_MMDD_START}":f"{y}-{BG_MMDD_END}"] for y in BACKGROUND_YEARS]
-    background = pd.concat(bg_parts)
-    add(f"   背景样本 n = {len(background)}（{len(BACKGROUND_YEARS)} 年同期）")
-    sh_rows = []
-    for c in cols:
-        r = evidence_shift(ev[c].to_numpy(dtype=float), background[c].to_numpy(dtype=float))
-        sh_rows.append({"feature": c, "kl": r["kl"], "mahal": r["mahal"],
-                        "shift_n_event": r["n_event"], "shift_n_bg": r["n_bg"],
-                        "shift_n_eff": r["n_eff"]})
-    sh_df = pd.DataFrame(sh_rows)
-    add(f"   完成 {len(cols)} 个特征")
-    add("")
-
-    # ---------- 合并 ----------
-    df = (te_df.merge(deg, on="feature", how="left")
-                .merge(dc_df, on="feature", how="left")
-                .merge(sh_df, on="feature", how="left"))
-    df["flux_group"] = df["feature"].apply(
-        lambda c: "flux_flux" if c in FLUX_FLUX_VARS
-        else "flux_momentum" if c in FLUX_MOMENTUM_VARS else "")
-
-    # ---------- BH-FDR ----------
-    add("-" * 78)
-    add("[6] BH-FDR 多重比较校正 ★ 用户约束 3")
-    add("-" * 78)
-    n_lag = len(LAGS[::TE_LAG_STEP])
-    p_te = df["te_p"].to_numpy(dtype=float)
-    rej1, q1 = bh_fdr(p_te, ALPHA)
-    df["te_q"] = q1
-    df["te_sig"] = rej1
-
-    p_strict = np.minimum(p_te * n_lag, 1.0)
-    rej2, q2 = bh_fdr(p_strict, ALPHA)
-    df["te_q_strict"] = q2
-    df["te_sig_strict"] = rej2
-
-    add(f"检验族: {len(cols)} 个特征；每个特征扫描 {n_lag} 个滞后"
-        f"（{TE_SUBSAMPLE}h 抽样，滞后 {list(LAGS[::TE_LAG_STEP])} h）取最大 TE")
-    add(f"α = {ALPHA}")
-    add(f"  口径 A（族 = {len(cols)} 特征）        : "
-        f"校正前显著 {int((p_te <= ALPHA).sum())} → 校正后 {int(rej1.sum())}")
-    add(f"  口径 B（族 = {len(cols)}×{n_lag} 检验，保守）: "
-        f"校正前显著 {int((p_strict <= ALPHA).sum())} → 校正后 {int(rej2.sum())}")
-    add("")
-
-    # ---------- 共识排序 ----------
-    add("-" * 78)
-    add("[7] Borda 共识排序（四证据）")
-    add("-" * 78)
-    df["rank_te"] = df["te"].rank(ascending=False, method="average")
-    df["rank_pcmci"] = df["degree_sum"].rank(ascending=False, method="average")
-    df["rank_dcor"] = df["dcor"].rank(ascending=False, method="average")
-    df["rank_shift"] = df["kl"].rank(ascending=False, method="average")
-    for c in ["rank_te", "rank_pcmci", "rank_dcor", "rank_shift"]:
-        df[c] = df[c].fillna(len(df) + 1)
-    df["borda"] = df[["rank_te", "rank_pcmci", "rank_dcor", "rank_shift"]].sum(axis=1)
-    df = df.sort_values("borda").reset_index(drop=True)
-    df["borda_rank"] = np.arange(1, len(df) + 1)
-
-    add(f"{'rank':>4} {'feature':<22}{'borda':>7}{'TE':>9}{'deg':>6}{'dCor':>8}{'KL':>8}")
-    for _, r in df.head(15).iterrows():
-        add(f"{int(r['borda_rank']):>4} {r['feature']:<22}{r['borda']:>7.1f}"
-            f"{r['te']:>9.4f}{int(r['degree_sum']):>6}{r['dcor']:>8.4f}{r['kl']:>8.4f}")
-    add("")
-
-    top5 = df.head(5)
-    add("Top-5:")
-    for _, r in top5.iterrows():
-        add(f"   {int(r['borda_rank'])}. {r['feature']:<22} borda={r['borda']:.1f}  "
-            f"TE伙伴={r['te_partner']}  组={r['flux_group'] or '-'}")
-    add("")
-
-    # ---------- 辐射类 ----------
-    add("-" * 78)
-    add("[8] 辐射类特征位置 ★ 用户约束 5")
-    add("-" * 78)
-    for c in RADIATION_VARS:
-        if c in df["feature"].values:
-            r = df[df["feature"] == c].iloc[0]
-            add(f"   {c:<14} Borda 排名 {int(r['borda_rank'])}/{len(df)}  "
-                f"TE={r['te']:.4f}  deg={int(r['degree_sum'])}  "
-                f"dCor={r['dcor']:.4f}  KL={r['kl']:.4f}")
-    rad_top5 = [c for c in RADIATION_VARS if c in top5["feature"].values]
-    add("")
-    if not rad_top5:
-        add("   判定：辐射类特征未进入 Top-5。")
-        add("   正面解释（写入报告）：")
-        add("     (1) 辐射是融水能量的**必要条件**——没有净辐射输入就没有消融；")
-        add("     (2) 但事件窗口内 Rn 相对 8 月气候态无异常（P2-1 实测 z = −0.003），")
-        add("         即「背景条件具备，但未出现异常」；")
-        add("     (3) 其作用通过 PDD / Melt_mm_h 间接体现——温度对辐射的积分才是异常载体。")
-        add("   → 「必要条件 ≠ 异常信号」，这是物理区分，不是模型缺陷。")
-    else:
-        add(f"   判定：{rad_top5} 进入 Top-5，需说明其异常机制。")
-    add("")
-
-    # ---------- 负对照 ----------
-    add("-" * 78)
-    add(f"[9] 负对照：时间块随机重排 (block = {NEG_BLOCK_HOURS} h，非 24 整数倍)")
-    add("-" * 78)
-    add(f"   块长选用说明：首次尝试 24 h 块长时 TE 下降中位数仅 −1.2%，")
-    add(f"   原因是土壤/气象变量有强日周期，24 h 整倍数移位不破坏日周期对齐。")
-    add(f"   改用 {NEG_BLOCK_HOURS} h 并对块顺序随机重排后重做。")
-    rng = np.random.default_rng(SEED)
-    neg_rows = []
-    for _, r in df.head(10).iterrows():
-        c = r["feature"]
-        partner = r["te_partner"]
-        if not partner:
-            continue
-        x = feats[c].to_numpy(dtype=float)
-        y = feats[partner].to_numpy(dtype=float)
-        y_perm = block_permute(y, NEG_BLOCK_HOURS, rng)
-        rr = te_between(x, y_perm, lags=LAGS[::TE_LAG_STEP], n_perm=10)
-        drop = (1 - rr["te"] / r["te"]) * 100 if r["te"] > 1e-9 else np.nan
-        neg_rows.append({"feature": c, "partner": partner,
-                         "te_real": r["te"], "te_perm": rr["te"], "te_drop_pct": drop})
-    neg = pd.DataFrame(neg_rows)
-    add(f"{'feature':<22}{'partner':<22}{'TE_real':>9}{'TE_perm':>9}{'下降%':>8}")
-    for _, r in neg.iterrows():
-        add(f"{r['feature']:<22}{r['partner']:<22}{r['te_real']:>9.4f}"
-            f"{r['te_perm']:>9.4f}{r['te_drop_pct']:>8.1f}")
-    med_drop = float(neg["te_drop_pct"].median()) if len(neg) else np.nan
-    add("")
-    add(f"TE 下降中位数 = {med_drop:.1f}%   (验收标准 ≥30%)")
-    neg_ok = np.isfinite(med_drop) and med_drop >= 30
-    add(f"判定: {'PASS' if neg_ok else 'FAIL'}")
-    add("")
-
-    # ---------- 稳定性 ----------
-    add("-" * 78)
-    add(f"[10] Block bootstrap 稳定性 (block={BOOT_BLOCK_HOURS}h, B={BOOT_N})")
-    add("-" * 78)
-    add("说明：bootstrap 在**全期样本**上做块重采样，重算四个证据的秩并重新 Borda，")
-    add("      统计每个特征进入 Top-5 的频率。这一步检验「排序对样本选择的敏感性」。")
-    add("      由于完整重算 TE 代价过高（本次 TE 已耗时 "
-        f"{time.time() - t_all:.0f}s 量级），")
-    add("      这里对 dCor / KL / degree 三个证据做重采样，TE 秩固定。")
-    add("      该近似会**高估**稳定性，论文中须注明。")
-
-    rng2 = np.random.default_rng(SEED)
-    n_rows = len(feats)
-    nb = int(np.ceil(n_rows / BOOT_BLOCK_HOURS))
-    blocks = [np.arange(i * BOOT_BLOCK_HOURS, min((i + 1) * BOOT_BLOCK_HOURS, n_rows))
-              for i in range(nb)]
-    feat_arr = feats[cols].to_numpy(dtype=float)
-    is_ev = ((feats.index >= EVENT_START) & (feats.index <= EVENT_END)).astype(float)
-
-    top5_count = {c: 0 for c in cols}
-    for _ in range(BOOT_N):
-        picks = rng2.integers(0, nb, size=nb)
-        idx = np.concatenate([blocks[p] for p in picks])
-        kl_b = []
-        dc_b = []
-        for k, c in enumerate(cols):
-            xb = feat_arr[idx, k]
-            ev_m = is_ev[idx] == 1
-            f_ev, b_ev = xb[ev_m], xb[~ev_m]
-            f_ev, b_ev = f_ev[np.isfinite(f_ev)], b_ev[np.isfinite(b_ev)]
-            if len(f_ev) > 20 and len(b_ev) > 20 and b_ev.std() > 1e-12:
-                kl_b.append(float(abs(f_ev.mean() - b_ev.mean()) / b_ev.std()))
-            else:
-                kl_b.append(np.nan)
-            xv = xb[np.isfinite(xb)]
-            dc_b.append(effective_n(xv))
-        s_kl = pd.Series(kl_b).rank(ascending=False, method="average").fillna(len(cols) + 1)
-        s_te = df["rank_te"].to_numpy()
-        s_deg = df["rank_pcmci"].to_numpy()
-        s_dc = df["rank_dcor"].to_numpy()
-        total = s_te + s_deg + s_dc + s_kl.to_numpy()
-        order = np.argsort(total)[:5]
-        for k in order:
-            top5_count[cols[k]] += 1
-
-    stab = pd.DataFrame({
-        "feature": cols,
-        "top5_freq": [top5_count[c] / BOOT_N for c in cols],
-    }).sort_values("top5_freq", ascending=False)
-
-    add("")
-    add(f"{'feature':<22}{'top5_freq':>12}")
-    for _, r in stab.head(12).iterrows():
-        add(f"{r['feature']:<22}{r['top5_freq']:>12.3f}")
-    add("")
-
-    # ---------- 落盘 ----------
-    TAB_DIR.mkdir(parents=True, exist_ok=True)
-    FIG_DIR.mkdir(parents=True, exist_ok=True)
-    df.to_csv(TAB_DIR / "b2_ranking_full.csv", index=False, encoding="utf-8-sig")
-    top5.to_csv(TAB_DIR / "b2_top5_consensus.csv", index=False, encoding="utf-8-sig")
-    neg.to_csv(TAB_DIR / "b2_negative_control.csv", index=False, encoding="utf-8-sig")
-    edges.to_csv(TAB_DIR / "b2_pcmci_network.csv", index=False, encoding="utf-8-sig")
-    stab.to_csv(TAB_DIR / "b2_stability.csv", index=False, encoding="utf-8-sig")
-    add("-" * 78)
-    add("[11] 落盘")
-    add("-" * 78)
-    for f in ["b2_ranking_full.csv", "b2_top5_consensus.csv", "b2_negative_control.csv",
-              "b2_pcmci_network.csv", "b2_stability.csv"]:
-        add(f"   out/B/tab/{f}")
-
+    args = parse_args()
+    if args.te_perms < 1 or args.bootstrap < 1:
+        raise ValueError("置换与 bootstrap 次数必须为正")
+    started = time.time()
+    frame = pd.read_csv(FEATURES_PATH, index_col=0, parse_dates=True)
+    if RESPONSE not in frame:
+        raise KeyError(f"缺少连续响应 {RESPONSE}")
+    self_check(frame)
+    if args.check_only:
+        return 0
+    features, exclusions = eligible_features(frame)
+    if args.features:
+        requested = args.features.split(",")
+        missing = set(requested) - set(frame.columns)
+        if missing:
+            raise KeyError(f"未知特征 {sorted(missing)}")
+        if args.output_root.resolve() == DEFAULT_OUT.resolve():
+            raise ValueError("特征子集测试必须指定非正式 --output-root，禁止覆盖正式结果")
+        features = requested
+    out = args.output_root
+    tab, fig, log_dir = out / "tab", out / "fig", out / "log"
+    for directory in (tab, fig, log_dir):
+        directory.mkdir(parents=True, exist_ok=True)
+    log = ["=" * 78, "P2 Q1 客观连续响应的四证据排序", "=" * 78,
+           f"运行时间戳: {datetime.now().astimezone().isoformat()}",
+           f"Python {sys.version.split()[0]} / numpy {np.__version__} / pandas {pd.__version__}",
+           f"SEED={SEED}; TE perms={args.te_perms}; bootstrap={args.bootstrap}",
+           f"连续响应: {RESPONSE}（实测 VWC_0.1m 的逐时差分，不是人工综合指数）",
+           "原二值窗口响应在分段内满足 A_t=A_lag，TE 条件互信息恒零；故不作为 TE/PCMCI 响应。",
+           "前兆窗=2026-08-19 00:00--2026-08-26 10:00（含首尾 179h）",
+           "背景窗=2021--2025 每年同历日同时段，每年 179h，总计 895h；不跨年构造滞后。",
+           "TE: KSG k=5，1--24h；条件局部置换；逐滞后 p<0.05 取最大，并另给 maxT 校正。",
+           "PCMCI+: 双变量 ParCorr，alpha=0.05；仅计显著 X->A 边。",
+           "dCor/lambda: 六窗内 X 与前兆窗指示；lambda_U=P(V>.9|U>.9)。",
+           "KL: 50 箱 P_event||P_background；马氏距离为一维 |均值差|/背景标准差。",
+           "因果限制: 双变量探索性统计，不排除未观测混杂，不等于灾害因果识别。"]
     try:
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-        plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "DejaVu Sans"]
-        plt.rcParams["axes.unicode_minus"] = False
+        tigramite_version = importlib.metadata.version("tigramite")
+        log.append(f"tigramite={tigramite_version}（已安装，未执行安装）")
+    except importlib.metadata.PackageNotFoundError:
+        log.append("tigramite 未安装：回退为三阶符号化 TE + 偏相关")
+    for col, reason in exclusions.items():
+        log.append(f"Borda 排除 {col}: {reason}")
+    log.append(f"参与计算特征 {len(features)}；主表保留全部输入特征。")
 
-        fig, ax = plt.subplots(figsize=(10, 6))
-        show = stab.head(15)
-        color = ["#c1440e" if f in top5["feature"].values else "#7a8fa6" for f in show["feature"]]
-        ax.barh(range(len(show))[::-1], show["top5_freq"], color=color)
-        ax.set_yticks(range(len(show))[::-1])
-        ax.set_yticklabels(show["feature"], fontsize=9)
-        ax.set_xlabel("Bootstrap 进入 Top-5 的频率")
-        ax.set_title("Q1 共识排序稳定性（红色 = 最终 Top-5）")
-        ax.axvline(0.5, color="0.5", ls=":", lw=1)
-        ax.grid(axis="x", alpha=0.3)
-        fig.tight_layout()
-        fig.savefig(FIG_DIR / "b2_stability_bar.png", dpi=200, bbox_inches="tight")
-        plt.close(fig)
+    print("[1/5] 全样本四证据", flush=True)
+    evidence, lag_table, edges, caches = compute_evidence(frame, features, args.te_perms, SEED)
+    ranked = add_ranks(evidence)
+    top5 = ranked.head(5).copy()
+    print("[2/5] 72h block bootstrap", flush=True)
+    stability = bootstrap_stability(frame, features, caches, evidence, args.bootstrap, SEED + 500)
+    top5 = top5.join(stability[["top5_frequency"]])
+    print("[3/5] 24h 循环移位负对照（重算全部证据）", flush=True)
+    negative, negative_summary, perm_evidence = negative_control(frame, features, evidence, args.te_perms, SEED)
+    negative_pass = bool(negative_summary.significant_decrease.all())
+    print("[4/5] 写表与图", flush=True)
 
-        fig, ax = plt.subplots(figsize=(10, 5))
-        xp = np.arange(len(neg))
-        ax.bar(xp - 0.2, neg["te_real"], 0.4, label="真实", color="#2b6cb0")
-        ax.bar(xp + 0.2, neg["te_perm"], 0.4, label="块置换", color="#c1440e")
-        ax.set_xticks(xp)
-        ax.set_xticklabels(neg["feature"], rotation=45, ha="right", fontsize=8)
-        ax.set_ylabel("传递熵 TE (nats)")
-        ax.set_title(f"负对照：时间块循环移位（下降中位数 {med_drop:.1f}%）")
-        ax.legend(frameon=False)
-        ax.grid(axis="y", alpha=0.3)
-        fig.tight_layout()
-        fig.savefig(FIG_DIR / "b2_negative_control.png", dpi=200, bbox_inches="tight")
-        plt.close(fig)
+    ranked.insert(0, "analysis_role", np.where(ranked.index == RESPONSE, "response", "candidate"))
+    ranked["seed"] = SEED
+    ranked.to_csv(tab / "b2_ranking_full.csv", encoding="utf-8-sig")
+    top5.to_csv(tab / "b2_top5_consensus.csv", encoding="utf-8-sig")
+    stability.to_csv(tab / "b2_stability.csv", encoding="utf-8-sig")
+    negative.to_csv(tab / "b2_negative_control.csv", encoding="utf-8-sig")
+    negative_summary.to_csv(tab / "b2_negative_control_summary.csv", index=False, encoding="utf-8-sig")
+    lag_table.to_csv(tab / "b2_te_lags.csv", index=False, encoding="utf-8-sig")
+    if edges.empty:
+        edges = pd.DataFrame(columns=["source", "target", "lag_h", "mci", "p_value", "method"])
+    edges.to_csv(tab / "b2_pcmci_network.csv", index=False, encoding="utf-8-sig")
+    plot_network(edges, fig / "b2_causal_network.png", str(evidence.pcmci_method.dropna().iloc[0]))
+    plot_stability(stability, top5.index.tolist(), fig / "b2_stability_bar.png", args.bootstrap)
+    plot_negative(negative, negative_summary, fig / "b2_negative_control.png")
 
-        fig, ax = plt.subplots(figsize=(9, 7))
-        d2 = deg.sort_values("degree_sum", ascending=False).head(20)
-        ax.scatter(d2["out_degree"], d2["in_degree"], s=60, c="#2b6cb0", alpha=0.7)
-        for _, r in d2.iterrows():
-            ax.annotate(r["feature"], (r["out_degree"], r["in_degree"]),
-                        fontsize=7, xytext=(3, 3), textcoords="offset points")
-        ax.set_xlabel("出度（驱动其他特征的数量）")
-        ax.set_ylabel("入度（被其他特征驱动的数量）")
-        ax.set_title("PCMCI 因果网络度分布（Top-20）")
-        ax.grid(alpha=0.3)
-        fig.tight_layout()
-        fig.savefig(FIG_DIR / "b2_pcmci_degree.png", dpi=200, bbox_inches="tight")
-        plt.close(fig)
-        add("   已写出 b2_stability_bar.png / b2_negative_control.png / b2_pcmci_degree.png")
-    except Exception as exc:  # noqa: BLE001
-        add(f"   出图失败: {exc!r}")
-
-    add("")
-    add("-" * 78)
-    add("[结论]")
-    add("-" * 78)
-    add("ALL_OK" if neg_ok else "DEGRADED: 负对照未达标")
-    add(f"  Top-5            : {', '.join(top5['feature'].tolist())}")
-    add(f"  负对照下降中位数 : {med_drop:.1f}% (要求 ≥30%)")
-    add(f"  PCMCI 网络密度   : {len(edges) / (len(cols) * (len(cols) - 1) * PCMCI_TAU_MAX):.2%}")
-    add(f"  总耗时           : {time.time() - t_all:.1f}s")
-
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    (LOG_DIR / "p2b_causal.log").write_text("\n".join(log) + "\n", encoding="utf-8")
+    log.extend(["", "Top-5（Borda 四组等权秩，越小越好）:"])
+    for feature, row in top5.iterrows():
+        log.append(f"  {int(row.borda_rank)}. {feature}: rank_sum={row.borda_rank_sum:.2f}, "
+                   f"TE={row.te_raw:.5g}, PCMCI={row.pcmci_raw_strength:.5g}, "
+                   f"dCor={row.dcor:.5g}, KL={row.kl:.5g}, boot={row.top5_frequency:.3f}")
+    log.extend(["", "24h 负对照（单侧 Wilcoxon，real > shifted）:"])
+    for _, row in negative_summary.iterrows():
+        log.append(f"  {row.metric}: n={row.n}, real={row.real_median:.6g}, shifted={row.shifted_median:.6g}, "
+                   f"median_drop={row.median_drop_pct:.3f}%, p={row.wilcoxon_p_greater:.6g}, "
+                   f"{'PASS' if row.significant_decrease else 'FAIL'}")
+    log.append("注意：24h 移位保留日周期；窗内循环移位还不改变 KL/马氏距离的边缘分布，"
+               "因此负对照失败不能通过改块长掩盖。")
+    log.extend(["", "bootstrap 口径：依赖与分布偏移逐次重算；TE 固定原邻域仅重采样局部贡献；"
+                "PCMCI 用主分析所选滞后上的偏相关代理。后两项为近似，稳定性可能偏乐观。",
+                "", f"NEGATIVE_CONTROL: {'PASS' if negative_pass else 'FAIL'}",
+                "结论口径：四证据 Top-5 已生成，但仅作探索性排序；负对照失败时不作已验证因果结论。",
+                f"总耗时: {time.time() - started:.1f}s",
+                "输出: b2_ranking_full.csv / b2_top5_consensus.csv / b2_stability.csv / "
+                "b2_negative_control.csv / b2_te_lags.csv / b2_pcmci_network.csv",
+                "图: b2_causal_network.png / b2_stability_bar.png / b2_negative_control.png"])
+    (log_dir / "p2b_causal.log").write_text("\n".join(log) + "\n", encoding="utf-8")
     print("\n".join(log))
-    return 0 if neg_ok else 1
+    return 0 if negative_pass else 2
 
 
 if __name__ == "__main__":
